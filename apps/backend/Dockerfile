@@ -31,12 +31,11 @@ COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.ya
 COPY --from=builder /app/apps/backend/package.json ./apps/backend/
 COPY --from=builder /app/packages ./packages
 
-# Copy Prisma schema and generated client
+# Copy Prisma schema
 COPY --from=builder /app/apps/backend/prisma ./apps/backend/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 RUN pnpm install --frozen-lockfile --prod
+RUN npx prisma generate --schema=./apps/backend/prisma/schema.prisma
 
 COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
 
