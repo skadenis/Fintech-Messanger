@@ -121,14 +121,34 @@ jobs:
             docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d
             
             # 4. Health Check Logic
-            echo "Starting health check..."
+            echo "Container status after startup:"
+            docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml ps
+
+            echo "Checking backend inside the backend container..."
+            INTERNAL_SUCCESS=false
+            for i in {1..12}; do
+              echo "Checking internal health (attempt $i/12)..."
+              if docker exec fintech_messenger-backend-1 node -e "fetch('http://127.0.0.1:3000/health').then(r => r.text()).then(t => { console.log(t); process.exit(t.includes('ok') ? 0 : 1) }).catch(err => { console.error(err); process.exit(1) })"; then
+                INTERNAL_SUCCESS=true
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$INTERNAL_SUCCESS" = false ]; then
+              echo "Backend is unhealthy inside its own container."
+              docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml logs --tail=200 backend
+              exit 1
+            fi
+
+            echo "Starting external health check..."
             HEALTH_URL="https://api.msg.fintech-consult.ru/health"
             SUCCESS=false
             
-            for i in {1..12}; do
-              echo "Checking health (attempt $i/12)..."
+            for i in {1..24}; do
+              echo "Checking health (attempt $i/24)..."
               # Ignore self signed certs just in case it's still provisioning
-              if curl -k -s -f "$HEALTH_URL" | grep -q "ok"; then
+              if curl -k -L -s -f "$HEALTH_URL" | grep -q "ok"; then
                 echo "Application is HEALTHY!"
                 SUCCESS=true
                 break
@@ -138,6 +158,16 @@ jobs:
             
             if [ "$SUCCESS" = false ]; then
               echo "Application is UNHEALTHY! Rolling back..."
+              echo "Recent messenger logs:"
+              docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml logs --tail=120
+              echo "Relevant proxy containers:"
+              docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' | grep -E 'nginx|proxy|acme|companion|fintech_messenger' || true
+              echo "Checking whether nginx-proxy generated routes for msg domains:"
+              docker exec app-nginx-proxy-1 sh -c "nginx -T 2>/dev/null | grep -nE 'msg.fintech-consult.ru|api.msg.fintech-consult.ru|admin.msg.fintech-consult.ru' -A 12 -B 3" || true
+              echo "Recent nginx-proxy logs:"
+              docker logs --tail=120 app-nginx-proxy-1 || true
+              echo "Recent acme-companion logs:"
+              docker logs --tail=120 app-acme-companion-1 || true
               if [ -f .env.bak ]; then
                 mv .env.bak .env
                 docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d
