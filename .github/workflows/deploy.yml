@@ -118,6 +118,52 @@ jobs:
             
             # 3. Build fresh images from copied source and start stack
             docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml build --no-cache backend admin-panel user-panel
+            docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d postgres redis
+            for i in {1..30}; do
+              if docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml exec -T postgres pg_isready -U messenger -d messenger; then
+                break
+              fi
+              echo "Waiting for postgres (attempt $i/30)..."
+              sleep 2
+            done
+            docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml run -T --rm --no-deps -e VIRTUAL_HOST= -e LETSENCRYPT_HOST= -e LETSENCRYPT_EMAIL= backend pnpm dlx prisma@6.9.0 migrate deploy --schema=./prisma/schema.prisma
+            docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml run -T --rm --no-deps -e VIRTUAL_HOST= -e LETSENCRYPT_HOST= -e LETSENCRYPT_EMAIL= backend node <<'NODE'
+            const { PrismaClient } = require('@prisma/client');
+            const bcrypt = require('bcrypt');
+
+            const prisma = new PrismaClient();
+            const email = process.env.INITIAL_ADMIN_EMAIL || 'admin@example.com';
+            const password = process.env.INITIAL_ADMIN_PASSWORD || 'admin123';
+            const name = process.env.INITIAL_ADMIN_NAME || 'Super Admin';
+
+            async function main() {
+              const existingAdmin = await prisma.user.findUnique({ where: { email } });
+              if (existingAdmin) {
+                console.log(`Initial admin ${email} already exists.`);
+                return;
+              }
+
+              const passwordHash = await bcrypt.hash(password, 10);
+              await prisma.user.create({
+                data: {
+                  email,
+                  passwordHash,
+                  name,
+                  role: 'SUPER_ADMIN',
+                },
+              });
+              console.log(`Initial admin ${email} created.`);
+            }
+
+            main()
+              .catch((error) => {
+                console.error(error);
+                process.exit(1);
+              })
+              .finally(async () => {
+                await prisma.$disconnect();
+              });
+            NODE
             docker compose -p fintech_messenger -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d
             
             # 4. Health Check Logic
