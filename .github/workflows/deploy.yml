@@ -112,10 +112,11 @@ jobs:
             echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
             # Keep image vars for compatibility, but services are built locally on server.
             echo "IMAGE_BACKEND=fintech-backend:prod" >> .env
-            echo "IMAGE_FRONTEND=fintech-frontend:prod" >> .env
+            echo "IMAGE_ADMIN=fintech-admin:prod" >> .env
+            echo "IMAGE_USER=fintech-user:prod" >> .env
             
             # 3. Build fresh images from copied source and start stack
-            docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml build --no-cache backend frontend
+            docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml build --no-cache backend admin-panel user-panel
             docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d --remove-orphans
             
             # 4. Health Check Logic

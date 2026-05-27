@@ -10,7 +10,8 @@ services:
       - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       - backend
-      - frontend
+      - admin-panel
+      - user-panel
 
   certbot:
     image: certbot/certbot
@@ -24,8 +25,13 @@ services:
     env_file: .env
     restart: always
 
-  frontend:
-    image: ${IMAGE_FRONTEND:-fintech-frontend:prod}
+  admin-panel:
+    image: ${IMAGE_ADMIN:-fintech-admin:prod}
+    env_file: .env
+    restart: always
+
+  user-panel:
+    image: ${IMAGE_USER:-fintech-user:prod}
     env_file: .env
     restart: always
 
