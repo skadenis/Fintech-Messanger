@@ -43,5 +43,5 @@ WORKDIR /app/apps/backend
 
 EXPOSE 3000
 
-# Start script
-CMD ["node", "dist/main"]
+# Nest writes compiled sources under dist/src with the current tsconfig.
+CMD ["node", "dist/src/main.js"]
