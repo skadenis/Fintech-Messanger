@@ -1,38 +1,44 @@
 services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./vhost:/etc/nginx/conf.d:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-    depends_on:
-      - backend
-      - admin-panel
-      - user-panel
-
-  certbot:
-    image: certbot/certbot
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt
-      - /var/www/certbot:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
-
   backend:
     image: ${IMAGE_BACKEND:-fintech-backend:prod}
     env_file: .env
+    environment:
+      VIRTUAL_HOST: api.msg.fintech-consult.ru
+      LETSENCRYPT_HOST: api.msg.fintech-consult.ru
+      VIRTUAL_PORT: 3000
+    expose:
+      - "3000"
+    networks:
+      - default
+      - proxy
     restart: always
 
   admin-panel:
     image: ${IMAGE_ADMIN:-fintech-admin:prod}
     env_file: .env
+    environment:
+      VIRTUAL_HOST: admin.msg.fintech-consult.ru
+      LETSENCRYPT_HOST: admin.msg.fintech-consult.ru
+      VIRTUAL_PORT: 80
+    expose:
+      - "80"
+    networks:
+      - default
+      - proxy
     restart: always
 
   user-panel:
     image: ${IMAGE_USER:-fintech-user:prod}
     env_file: .env
+    environment:
+      VIRTUAL_HOST: msg.fintech-consult.ru
+      LETSENCRYPT_HOST: msg.fintech-consult.ru
+      VIRTUAL_PORT: 80
+    expose:
+      - "80"
+    networks:
+      - default
+      - proxy
     restart: always
 
   postgres:
@@ -54,3 +60,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  proxy:
+    external: true
+    name: app_default
