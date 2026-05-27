@@ -4,6 +4,9 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
+ARG VITE_API_URL=https://api.msg.fintech-consult.ru
+ENV VITE_API_URL=$VITE_API_URL
+
 # Copy workspace and lock files
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY turbo.json ./

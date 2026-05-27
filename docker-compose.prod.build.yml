@@ -9,10 +9,14 @@ services:
     build:
       context: ./repo
       dockerfile: apps/admin-panel/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://api.msg.fintech-consult.ru}
     image: ${IMAGE_ADMIN:-fintech-admin:prod}
 
   user-panel:
     build:
       context: ./repo
       dockerfile: apps/user-panel/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://api.msg.fintech-consult.ru}
     image: ${IMAGE_USER:-fintech-user:prod}
