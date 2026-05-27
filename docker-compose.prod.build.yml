@@ -1,0 +1,12 @@
+services:
+  backend:
+    build:
+      context: ./repo
+      dockerfile: apps/backend/Dockerfile
+    image: ${IMAGE_BACKEND:-fintech-backend:prod}
+
+  frontend:
+    build:
+      context: ./repo
+      dockerfile: apps/admin-panel/Dockerfile
+    image: ${IMAGE_FRONTEND:-fintech-frontend:prod}

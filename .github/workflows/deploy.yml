@@ -1,0 +1,151 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run tests and build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.15.0
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm db:generate
+
+      - name: Build project
+        run: pnpm build
+
+      # Add tests here if you have them, e.g.:
+      # - name: Run tests
+      #   run: pnpm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare server directories
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p ~/app/vhost
+            rm -rf ~/app/repo
+            mkdir -p ~/app/repo
+
+      - name: Copy deployment manifests to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.prod.yml,docker-compose.prod.build.yml,vhost/**"
+          target: "~/app"
+
+      - name: Copy application source to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: ".dockerignore,package.json,pnpm-lock.yaml,pnpm-workspace.yaml,turbo.json,apps/**,packages/**"
+          target: "~/app/repo"
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/app
+            
+            # 1. Backup current env for rollback
+            [ -f .env ] && cp .env .env.bak
+            
+            # 2. Write new configuration
+            echo "${{ secrets.ENV_FILE }}" > .env
+            [ -n "${{ secrets.JWT_SECRET }}" ] && echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
+            echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
+            # Keep image vars for compatibility, but services are built locally on server.
+            echo "IMAGE_BACKEND=fintech-backend:prod" >> .env
+            echo "IMAGE_FRONTEND=fintech-frontend:prod" >> .env
+            
+            # 3. Build fresh images from copied source and start stack
+            docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml build --no-cache backend frontend
+            docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d --remove-orphans
+            
+            # 4. Health Check Logic
+            echo "Starting health check..."
+            HEALTH_URL="https://api.msg.fintech-consult.ru/health"
+            SUCCESS=false
+            
+            for i in {1..12}; do
+              echo "Checking health (attempt $i/12)..."
+              # Ignore self signed certs just in case it's still provisioning
+              if curl -k -s -f "$HEALTH_URL" | grep -q "ok"; then
+                echo "Application is HEALTHY!"
+                SUCCESS=true
+                break
+              fi
+              sleep 5
+            done
+            
+            if [ "$SUCCESS" = false ]; then
+              echo "Application is UNHEALTHY! Rolling back..."
+              if [ -f .env.bak ]; then
+                mv .env.bak .env
+                docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml up -d
+                echo "Rollback to previous version completed."
+              else
+                echo "No backup env found, cannot rollback automatically."
+              fi
+              exit 1
+            else
+              echo "Deployment successful."
+              rm -f .env.bak
+              docker image prune -f
+            fi
