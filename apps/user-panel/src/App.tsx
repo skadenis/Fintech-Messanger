@@ -377,6 +377,7 @@ export default function App() {
           auth={auth}
           conversations={conversations}
           selectedConversationId={selectedConversationId}
+          selectedLineName={selectedLine?.name}
           formatTitle={(conversation) => formatClientTitle(auth, conversation)}
           onSelect={handleConversationSelect}
         />

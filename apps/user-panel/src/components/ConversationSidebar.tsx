@@ -7,6 +7,7 @@ interface ConversationSidebarProps {
   auth: AuthResponse;
   conversations: ConversationDto[];
   selectedConversationId: string | null;
+  selectedLineName?: string | null;
   formatTitle: (conversation: ConversationDto) => string;
   onSelect: (id: string) => void;
 }
@@ -15,6 +16,7 @@ export function ConversationSidebar({
   auth,
   conversations,
   selectedConversationId,
+  selectedLineName,
   formatTitle,
   onSelect,
 }: ConversationSidebarProps) {
@@ -37,7 +39,7 @@ export function ConversationSidebar({
         <div className="min-w-0 flex-1">
           <div className="font-medium text-[15px] truncate">{auth.user.name}</div>
           <div className="text-[13px] text-[var(--tg-text-secondary)] truncate">
-            {auth.user.groupName ?? auth.user.role}
+            {selectedLineName ?? auth.user.groupName ?? (auth.user.role === 'OPERATOR' ? 'Оператор' : auth.user.role)}
           </div>
         </div>
       </div>
