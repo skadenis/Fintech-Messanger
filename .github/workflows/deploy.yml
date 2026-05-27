@@ -108,8 +108,6 @@ jobs:
             
             # 2. Write new configuration
             echo "${{ secrets.ENV_FILE }}" > .env
-            [ -n "${{ secrets.JWT_SECRET }}" ] && echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-            echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
             # Keep image vars for compatibility, but services are built locally on server.
             echo "IMAGE_BACKEND=fintech-backend:prod" >> .env
             echo "IMAGE_ADMIN=fintech-admin:prod" >> .env
