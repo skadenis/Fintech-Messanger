@@ -12,6 +12,9 @@ COPY turbo.json ./
 COPY apps ./apps
 COPY packages ./packages
 
+# Build the shared package first
+RUN pnpm --filter @fintech/shared build
+
 # Install dependencies and build
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @fintech/admin-panel build
