@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  GROUP_ADMIN
+  OPERATOR
+}
+
+enum MessengerType {
+  TELEGRAM
+  WHATSAPP
+  MAX
+}
+
+enum MessageDirection {
+  INCOMING
+  OUTGOING
+}
+
+enum MessageSource {
+  WAPPI
+  PANEL
+  BITRIX
+}
+
+enum MessageStatus {
+  PENDING
+  DELIVERED
+  READ
+  ERROR
+}
+
+model Group {
+  id                 String      @id @default(uuid())
+  name               String
+  bitrixDepartmentId String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  users              User[]
+  lines              WappiLine[]
+}
+
+model User {
+  id               String               @id @default(uuid())
+  email            String?              @unique
+  passwordHash     String?
+  name             String
+  role             Role                 @default(OPERATOR)
+  groupId          String?
+  group            Group?               @relation(fields: [groupId], references: [id])
+  bitrixUserId     String?
+  bitrixPortalId   String?
+  avatarUrl        String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  lineAssignments  UserLineAssignment[]
+  sentMessages     Message[]
+
+  @@unique([bitrixUserId, bitrixPortalId])
+}
+
+model WappiLine {
+  id              String               @id @default(uuid())
+  name            String
+  messengerType   MessengerType
+  wappiProfileId  String
+  wappiApiToken   String
+  groupId         String?
+  group           Group?               @relation(fields: [groupId], references: [id])
+  status          String               @default("offline")
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  assignments     UserLineAssignment[]
+  conversations   Conversation[]
+}
+
+model UserLineAssignment {
+  id     String    @id @default(uuid())
+  userId String
+  lineId String
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  line   WappiLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lineId])
+}
+
+model Conversation {
+  id              String    @id @default(uuid())
+  lineId          String
+  line            WappiLine @relation(fields: [lineId], references: [id])
+  wappiChatId     String
+  contactName     String?
+  contactPhone    String?
+  bitrixContactId String?
+  lastMessageAt   DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  messages        Message[]
+
+  @@unique([lineId, wappiChatId])
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  conversationId String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  wappiMessageId String?
+  direction      MessageDirection
+  source         MessageSource
+  body           String?
+  type           String           @default("text")
+  caption        String?
+  fileName       String?
+  mimeType       String?
+  mediaUrl       String?
+  status         MessageStatus    @default(PENDING)
+  senderUserId   String?
+  senderUser     User?            @relation(fields: [senderUserId], references: [id])
+  rawPayload     Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([conversationId, createdAt])
+}

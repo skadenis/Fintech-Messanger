@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+:root {
+  --tg-bg: #0e1621;
+  --tg-sidebar: #17212b;
+  --tg-panel: #17212b;
+  --tg-hover: #202b36;
+  --tg-active: rgba(43, 82, 120, 0.35);
+  --tg-border: rgba(255, 255, 255, 0.06);
+  --tg-text: #f5f5f5;
+  --tg-text-secondary: #708499;
+  --tg-accent: #2aabee;
+  --tg-bubble-in: #182533;
+  --tg-bubble-out: #2b5278;
+  --tg-input: #242f3d;
+  --tg-pattern: rgba(255, 255, 255, 0.025);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+.chat-wallpaper {
+  background-color: var(--tg-bg);
+  background-image:
+    radial-gradient(circle at 20% 20%, var(--tg-pattern) 0, transparent 45%),
+    radial-gradient(circle at 80% 0%, var(--tg-pattern) 0, transparent 35%),
+    radial-gradient(circle at 0% 80%, var(--tg-pattern) 0, transparent 40%),
+    linear-gradient(135deg, rgba(42, 171, 238, 0.03), transparent 50%);
+}
+
+.bubble-tail-out::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--tg-bubble-out);
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+
+.bubble-tail-in::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--tg-bubble-in);
+  clip-path: polygon(100% 0, 0 100%, 100% 100%);
+}

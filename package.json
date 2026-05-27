@@ -1,0 +1,18 @@
+{
+  "name": "fintech-messenger",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "db:generate": "pnpm --filter @fintech/backend exec prisma generate",
+    "db:migrate": "pnpm --filter @fintech/backend exec prisma migrate dev",
+    "db:seed": "pnpm --filter @fintech/backend exec prisma db seed",
+    "iframe:url": "pnpm --filter @fintech/backend exec ts-node scripts/generate-iframe-secret.ts"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
