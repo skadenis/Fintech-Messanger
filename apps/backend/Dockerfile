@@ -35,7 +35,7 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/backend/prisma ./apps/backend/prisma
 
 RUN pnpm install --frozen-lockfile --prod
-RUN npx prisma generate --schema=./apps/backend/prisma/schema.prisma
+RUN pnpm dlx prisma generate --schema=./apps/backend/prisma/schema.prisma
 
 COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
 
