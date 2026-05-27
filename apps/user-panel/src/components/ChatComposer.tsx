@@ -54,8 +54,9 @@ export function ChatComposer({
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    el.style.height = '44px';
+    const scrollHeight = el.scrollHeight;
+    el.style.height = `${Math.max(44, Math.min(scrollHeight, 160))}px`;
   }, [draft]);
 
   return (
@@ -95,7 +96,7 @@ export function ChatComposer({
             }}
             rows={1}
             placeholder="Сообщение..."
-            className="w-full max-h-40 resize-none bg-transparent px-4 py-2.5 text-[15px] leading-snug outline-none placeholder:text-[var(--tg-text-secondary)]"
+            className="w-full max-h-40 min-h-[44px] resize-none bg-transparent px-4 py-2.5 text-[15px] leading-snug outline-none placeholder:text-[var(--tg-text-secondary)]"
           />
         </div>
 
