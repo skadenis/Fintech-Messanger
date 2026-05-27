@@ -12,11 +12,13 @@ COPY turbo.json ./
 COPY apps ./apps
 COPY packages ./packages
 
+# Install dependencies (this also resolves shared package references)
+RUN pnpm install --frozen-lockfile
+
 # Build the shared package first
 RUN pnpm --filter @fintech/shared build
 
-# Install dependencies and build
-RUN pnpm install --frozen-lockfile
+# Build the user panel
 RUN pnpm --filter @fintech/user-panel build
 
 FROM nginx:alpine AS runner

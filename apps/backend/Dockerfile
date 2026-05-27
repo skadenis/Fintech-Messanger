@@ -12,11 +12,13 @@ COPY turbo.json ./
 COPY apps ./apps
 COPY packages ./packages
 
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
 # Build the shared package first
 RUN pnpm --filter @fintech/shared build
 
-# Install dependencies and build
-RUN pnpm install --frozen-lockfile
+# Generate prisma client and build backend
 RUN pnpm --filter @fintech/backend exec prisma generate
 RUN pnpm --filter @fintech/backend build
 
