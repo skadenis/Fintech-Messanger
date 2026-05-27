@@ -67,4 +67,4 @@ volumes:
 networks:
   proxy:
     external: true
-    name: app_default
+    name: app_proxy-nw
