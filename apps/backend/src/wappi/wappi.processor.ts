@@ -134,6 +134,12 @@ export class WappiProcessor extends WorkerHost {
       }
     }
 
+    let updateObj: any = { ...updateNameObj };
+    const contactPhone = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+    if (contactPhone) {
+      updateObj.contactPhone = contactPhone;
+    }
+
     const conversation = await this.prisma.conversation.upsert({
       where: {
         lineId_wappiChatId: {
@@ -142,14 +148,14 @@ export class WappiProcessor extends WorkerHost {
         },
       },
       update: {
-        ...updateNameObj,
+        ...updateObj,
         lastMessageAt: new Date(),
       },
       create: {
         lineId,
         wappiChatId: chatId,
         contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-        contactPhone: chatId.replace('@c.us', '').replace('@s.whatsapp.net', ''),
+        contactPhone,
       },
     });
 
@@ -188,20 +194,27 @@ export class WappiProcessor extends WorkerHost {
       typeof payload.type === 'string' ? payload.type : 'text',
     );
 
+    let body = this.wappiService.extractBody(payload);
+    let caption = typeof payload.caption === 'string'
+      ? payload.caption
+      : typeof payload.title === 'string'
+        ? payload.title
+        : null;
+
+    if (messageType !== 'text' && body && !caption) {
+      caption = body;
+      body = null;
+    }
+
     const message = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
         wappiMessageId: typeof payload.id === 'string' ? payload.id : null,
         direction,
         source: MessageSource.WAPPI,
-        body: this.wappiService.extractBody(payload),
+        body,
         type: messageType,
-        caption:
-          typeof payload.caption === 'string'
-            ? payload.caption
-            : typeof payload.title === 'string'
-              ? payload.title
-              : null,
+        caption,
         fileName:
           typeof payload.file_name === 'string' ? payload.file_name : null,
         mimeType:

@@ -453,6 +453,11 @@ export class AdminService {
 
       const contactPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
 
+      let updateObj: any = { ...updateNameObj };
+      if (contactPhone) {
+        updateObj.contactPhone = contactPhone;
+      }
+
       const conversation = await this.prisma.conversation.upsert({
         where: {
           lineId_wappiChatId: {
@@ -461,7 +466,7 @@ export class AdminService {
           },
         },
         update: {
-          ...updateNameObj,
+          ...updateObj,
         },
         create: {
           lineId: line.id,
@@ -498,6 +503,11 @@ export class AdminService {
 
           let body = msg.body;
           if (typeof body !== 'string' || body.startsWith('/9j/') || body.length >= 5000) {
+            body = null;
+          }
+          
+          if (messageType !== 'text' && body && !msg.caption) {
+            msg.caption = body;
             body = null;
           }
 
