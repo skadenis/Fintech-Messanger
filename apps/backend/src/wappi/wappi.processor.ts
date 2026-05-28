@@ -102,6 +102,12 @@ export class WappiProcessor extends WorkerHost {
 
     if (!chatId) return;
 
+    // Игнорируем каналы и группы (Telegram ID с минусом, WhatsApp @g.us или @broadcast)
+    if (chatId.startsWith('-') || chatId.includes('@g.us') || chatId.includes('@broadcast')) {
+      this.logger.debug(`Ignoring channel/group chat: ${chatId}`);
+      return;
+    }
+
     // В Wappi chatId часто приходит просто как номер (напр. '1820755' или '79115576368'). 
     // Нормализуем его до стандартного вида WhatsApp (чтобы не дублировать чаты)
     if (!chatId.includes('@')) {
