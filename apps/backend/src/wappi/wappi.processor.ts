@@ -125,8 +125,13 @@ export class WappiProcessor extends WorkerHost {
               ? payload.senderName
               : null;
 
-    if (contactName && contactName.startsWith('Contact ')) {
-      contactName = null;
+    let updateNameObj: any = {};
+    if (contactName) {
+      if (contactName.startsWith('Contact ')) {
+        updateNameObj = { contactName: null };
+      } else {
+        updateNameObj = { contactName };
+      }
     }
 
     const conversation = await this.prisma.conversation.upsert({
@@ -137,13 +142,13 @@ export class WappiProcessor extends WorkerHost {
         },
       },
       update: {
-        ...(contactName ? { contactName } : {}),
+        ...updateNameObj,
         lastMessageAt: new Date(),
       },
       create: {
         lineId,
         wappiChatId: chatId,
-        contactName,
+        contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
         contactPhone: chatId.replace('@c.us', '').replace('@s.whatsapp.net', ''),
       },
     });

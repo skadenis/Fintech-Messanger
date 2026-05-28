@@ -441,9 +441,16 @@ export class AdminService {
       }
 
       let contactName = chat.name || chat.pushname || null;
-      if (contactName && contactName.startsWith('Contact ')) {
-        contactName = null;
+      let updateNameObj: any = {};
+      
+      if (contactName) {
+        if (contactName.startsWith('Contact ')) {
+          updateNameObj = { contactName: null };
+        } else {
+          updateNameObj = { contactName };
+        }
       }
+
       const contactPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
 
       const conversation = await this.prisma.conversation.upsert({
@@ -454,12 +461,12 @@ export class AdminService {
           },
         },
         update: {
-          contactName: contactName ?? undefined,
+          ...updateNameObj,
         },
         create: {
           lineId: line.id,
           wappiChatId: normalizedChatId,
-          contactName: contactName ?? null,
+          contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
           contactPhone,
         },
       });
