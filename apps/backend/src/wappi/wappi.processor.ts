@@ -144,6 +144,12 @@ export class WappiProcessor extends WorkerHost {
       },
     });
 
+    // Игнорируем реакции и системные сообщения
+    if (payload.type === 'reaction' || payload.type === 'system') {
+      this.logger.debug(`Ignoring message with type ${payload.type}`);
+      return;
+    }
+
     const messageType = normalizeMessageType(
       typeof payload.type === 'string' ? payload.type : 'text',
     );
