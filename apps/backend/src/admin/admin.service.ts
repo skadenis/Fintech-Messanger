@@ -440,7 +440,10 @@ export class AdminService {
         normalizedChatId = `${normalizedChatId}@c.us`;
       }
 
-      const contactName = chat.name || chat.pushname || null;
+      let contactName = chat.name || chat.pushname || null;
+      if (contactName && contactName.startsWith('Contact ')) {
+        contactName = null;
+      }
       const contactPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
 
       const conversation = await this.prisma.conversation.upsert({

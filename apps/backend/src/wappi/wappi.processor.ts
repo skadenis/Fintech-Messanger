@@ -119,11 +119,15 @@ export class WappiProcessor extends WorkerHost {
         ? MessageDirection.INCOMING
         : MessageDirection.OUTGOING;
 
-    const contactName = typeof payload.contact_name === 'string' && payload.contact_name
+    let contactName = typeof payload.contact_name === 'string' && payload.contact_name
             ? payload.contact_name
             : typeof payload.senderName === 'string' && payload.senderName
               ? payload.senderName
               : null;
+
+    if (contactName && contactName.startsWith('Contact ')) {
+      contactName = null;
+    }
 
     const conversation = await this.prisma.conversation.upsert({
       where: {
