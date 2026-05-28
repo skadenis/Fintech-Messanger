@@ -125,10 +125,10 @@ export class WappiService {
       });
     }
     if (line.messengerType === 'MAX') {
-      return this.post(line, '/sync/chats/get', {
-        limit: String(limit),
-        offset: String(offset),
-        show_all: String(showAll),
+      return this.get(line, '/sync/chats/get', {
+        limit,
+        offset,
+        show_all: showAll,
       });
     }
     return this.post(line, '/sync/chats/get', {

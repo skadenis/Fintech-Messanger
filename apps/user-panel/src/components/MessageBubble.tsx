@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { MessageDto, MessageStatus } from '@fintech/shared';
 import { API_URL } from '../api';
 import { formatMessageTime } from '../utils/format';
+import { Linkify } from './Linkify';
 
 function isMediaType(type: string) {
   return ['image', 'video', 'video_note', 'document', 'audio', 'ptt', 'sticker', 'file'].includes(
@@ -231,7 +232,7 @@ export function MessageBubble({
 
     return (
       <span className="whitespace-pre-wrap break-words text-[15px] leading-[1.35]">
-        {message.body}
+        <Linkify>{message.body}</Linkify>
         <BubbleMeta time={time} status={message.status} outgoing={outgoing} />
       </span>
     );
@@ -252,7 +253,7 @@ export function MessageBubble({
         {renderContent()}
         {isMediaWithCaption && (
           <div className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-[1.35]">
-            {message.caption}
+            <Linkify>{message.caption}</Linkify>
           </div>
         )}
         {showMetaBelow && (
