@@ -142,6 +142,7 @@ export class AuthService {
       user: toUserDto(user),
       mode,
       contact,
+      domain: dto.domain,
     };
   }
 

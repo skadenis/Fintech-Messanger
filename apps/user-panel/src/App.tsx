@@ -25,7 +25,7 @@ import { ChatMessageList } from './components/ChatMessageList';
 import { ConversationSidebar } from './components/ConversationSidebar';
 import { MessengerRail } from './components/MessengerRail';
 import { messengerMeta } from './components/MessengerIcon';
-import { formatClientTitle, resolveClientContext } from './utils/client';
+import { formatClientSubtitle, formatClientTitle, resolveClientContext } from './utils/client';
 
 function messengerLabel(type: MessengerType) {
   return messengerMeta[type].label;
@@ -69,6 +69,7 @@ export default function App() {
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const selectedLine = lines.find((line) => line.id === selectedLineId) ?? null;
   const clientTitle = formatClientTitle(auth, selectedConversation);
+  const clientSubtitle = formatClientSubtitle(auth, selectedConversation);
 
   useEffect(() => {
     (async () => {
@@ -316,7 +317,10 @@ export default function App() {
       <div className="flex h-full flex-1 flex-col min-w-0 chat-wallpaper">
         <ChatHeader
           title={clientTitle}
+          subtitle={clientSubtitle || undefined}
           messengerType={selectedLine?.messengerType}
+          bitrixContactId={selectedConversation?.bitrixContactId || auth?.contact?.bitrixContactId}
+          domain={auth?.domain}
         />
         
         {/* Временный отладочный блок */}

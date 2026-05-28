@@ -41,6 +41,7 @@ export interface IframeAuthRequest {
   customer_id?: string;
   contact_phone?: string;
   contact_name?: string;
+  domain?: string;
 }
 
 export function resolveIframeContactId(dto: IframeAuthRequest): string | undefined {
@@ -56,6 +57,7 @@ export interface AuthResponse {
   user: UserDto;
   mode: IframeMode;
   contact?: ContactContext;
+  domain?: string;
 }
 
 export interface UserDto {

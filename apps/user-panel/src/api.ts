@@ -63,6 +63,7 @@ export function readIframeParams(): IframeAuthRequest {
     customer_id: params.get('customer_id') ?? params.get('CUSTOMER_ID') ?? undefined,
     contact_phone: params.get('contact_phone') ?? params.get('CONTACT_PHONE') ?? undefined,
     contact_name: params.get('contact_name') ?? params.get('CONTACT_NAME') ?? undefined,
+    domain: params.get('DOMAIN') ?? params.get('domain') ?? undefined,
   };
 }
 

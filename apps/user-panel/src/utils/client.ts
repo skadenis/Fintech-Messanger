@@ -16,14 +16,17 @@ export function formatClientTitle(
 ): string {
   const { name, phone } = resolveClientContext(auth, conversation);
 
-  if (name && phone) {
-    return `${name} ${phone}`;
-  }
-
-  return name ?? phone ?? 'Клиент';
+  return name || phone || 'Клиент';
 }
 
-export function formatClientSubtitle(contact?: ContactContext | null): string | null {
-  if (!contact?.phone) return null;
-  return contact.phone;
+export function formatClientSubtitle(
+  auth: AuthResponse | null,
+  conversation?: ConversationDto | null,
+): string | null {
+  const { name, phone } = resolveClientContext(auth, conversation);
+  
+  if (name && phone) {
+    return phone;
+  }
+  return null;
 }
