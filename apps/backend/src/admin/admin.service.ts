@@ -18,12 +18,16 @@ import {
 import { JwtPayload } from '../common/guards';
 import { PrismaService } from '../prisma/prisma.service';
 import { BitrixService } from '../bitrix/bitrix.service';
+import { WappiService } from '../wappi/wappi.service';
+import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
+import { normalizeMessageType } from '../common/media.utils';
 
 @Injectable()
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bitrixService: BitrixService,
+    private readonly wappiService: WappiService,
   ) {}
 
   private assertAdmin(user: JwtPayload) {
@@ -396,5 +400,137 @@ export class AdminService {
     }
 
     return { success: true, count: syncedCount };
+  }
+
+  async syncLineHistory(user: JwtPayload, lineId: string) {
+    if (user.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Only super admin can sync history');
+    }
+
+    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
+    if (!line) {
+      throw new NotFoundException('Line not found');
+    }
+
+    // 1. Fetch chats
+    const chatsResponse = await this.wappiService.getChats(line, 200, 0, true);
+    const dialogs = chatsResponse?.dialogs || [];
+
+    let syncedChats = 0;
+    let syncedMessages = 0;
+
+    for (const chat of dialogs) {
+      const wappiChatId = chat.id;
+
+      // Игнорируем каналы и группы
+      if (
+        wappiChatId.startsWith('-') || 
+        wappiChatId.includes('@g.us') || 
+        wappiChatId.includes('@broadcast') || 
+        chat.isGroup ||
+        chat.type === 'channel' ||
+        chat.type === 'group' ||
+        chat.type === 'supergroup'
+      ) {
+        continue;
+      }
+
+      let normalizedChatId = wappiChatId;
+      if (!normalizedChatId.includes('@')) {
+        normalizedChatId = `${normalizedChatId}@c.us`;
+      }
+
+      const contactName = chat.name || chat.pushname || null;
+      const contactPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+
+      const conversation = await this.prisma.conversation.upsert({
+        where: {
+          lineId_wappiChatId: {
+            lineId: line.id,
+            wappiChatId: normalizedChatId,
+          },
+        },
+        update: {
+          contactName: contactName ?? undefined,
+        },
+        create: {
+          lineId: line.id,
+          wappiChatId: normalizedChatId,
+          contactName: contactName ?? null,
+          contactPhone,
+        },
+      });
+
+      syncedChats++;
+
+      // 2. Fetch messages for this chat
+      try {
+        const messagesResponse = await this.wappiService.getMessages(line, wappiChatId, 100, 0);
+        const messages = messagesResponse?.messages || [];
+
+        for (const msg of messages) {
+          const wappiMessageId = msg.id;
+          if (!wappiMessageId) continue;
+
+          // Проверяем, есть ли уже такое сообщение
+          const existing = await this.prisma.message.findFirst({
+            where: { wappiMessageId },
+          });
+
+          if (existing) continue;
+
+          const direction = msg.fromMe ? MessageDirection.OUTGOING : MessageDirection.INCOMING;
+          const messageType = normalizeMessageType(msg.type);
+
+          let status = MessageStatus.DELIVERED;
+          if (msg.isRead || msg.delivery_status === 'read') status = MessageStatus.READ;
+          else if (msg.delivery_status === 'error') status = MessageStatus.ERROR;
+
+          let body = msg.body;
+          if (typeof body !== 'string' || body.startsWith('/9j/') || body.length >= 5000) {
+            body = null;
+          }
+
+          let reaction = null;
+          if (Array.isArray(msg.reactions) && msg.reactions.length > 0) {
+            reaction = msg.reactions[0].reaction;
+          }
+
+          await this.prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              wappiMessageId,
+              direction,
+              source: MessageSource.WAPPI,
+              body,
+              type: messageType,
+              caption: msg.caption || null,
+              fileName: msg.file_name || null,
+              mimeType: msg.mimetype || null,
+              mediaUrl: msg.thumbnail || msg.picture || msg.file_link || null,
+              status,
+              reaction,
+              rawPayload: msg,
+              createdAt: new Date(msg.time || Date.now()),
+            },
+          });
+
+          syncedMessages++;
+        }
+
+        // Обновляем lastMessageAt у диалога
+        if (messages.length > 0) {
+          const lastMsg = messages[0];
+          await this.prisma.conversation.update({
+            where: { id: conversation.id },
+            data: { lastMessageAt: new Date(lastMsg.time || Date.now()) },
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to sync messages for chat ${wappiChatId}`, err);
+      }
+    }
+
+    return { success: true, syncedChats, syncedMessages };
   }
 }

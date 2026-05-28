@@ -6,6 +6,39 @@ type SendPayload = Record<string, string>;
 
 @Injectable()
 export class WappiService {
+  private async get(
+    line: WappiLine,
+    path: string,
+    params: Record<string, string | number | boolean> = {},
+  ) {
+    const baseUrl = wappiBaseUrl(line.messengerType);
+    const searchParams = new URLSearchParams();
+    searchParams.append('profile_id', line.wappiProfileId);
+    
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        searchParams.append(key, String(value));
+      }
+    }
+
+    const url = `${baseUrl}${path}?${searchParams.toString()}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: line.wappiApiToken,
+      },
+    });
+
+    const raw = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(`Wappi get failed: ${response.status} ${JSON.stringify(raw)}`);
+    }
+
+    return raw;
+  }
+
   private async post(
     line: WappiLine,
     path: string,
@@ -81,6 +114,50 @@ export class WappiService {
     }
 
     return this.post(line, '/sync/message/file/url/send', payload);
+  }
+
+  async getChats(line: WappiLine, limit = 200, offset = 0, showAll = false) {
+    if (line.messengerType === 'TELEGRAM') {
+      return this.get(line, '/sync/chats/get', {
+        limit,
+        offset,
+        show_all: showAll,
+      });
+    }
+    if (line.messengerType === 'MAX') {
+      return this.get(line, '/sync/chats/get', {
+        limit,
+        offset,
+        show_all: showAll,
+      });
+    }
+    return this.get(line, '/sync/chats/get', {
+      limit,
+      offset,
+      show_all: showAll,
+    });
+  }
+
+  async getMessages(line: WappiLine, chatId: string, limit = 100, offset = 0) {
+    if (line.messengerType === 'TELEGRAM') {
+      return this.get(line, '/sync/messages/get', {
+        chat_id: chatId,
+        limit,
+        offset,
+      });
+    }
+    if (line.messengerType === 'MAX') {
+      return this.get(line, '/sync/messages/get', {
+        chat_id: chatId,
+        limit,
+        offset,
+      });
+    }
+    return this.get(line, '/sync/messages/get', {
+      chat_id: chatId,
+      limit,
+      offset,
+    });
   }
 
   extractChatId(payload: Record<string, unknown>): string | null {

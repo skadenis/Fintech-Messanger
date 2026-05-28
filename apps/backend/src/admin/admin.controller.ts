@@ -111,6 +111,12 @@ export class AdminController {
     return this.adminService.deleteLine(req.user, id);
   }
 
+  @Post('lines/:id/sync-history')
+  @Roles(Role.SUPER_ADMIN)
+  syncLineHistory(@Req() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.adminService.syncLineHistory(req.user, id);
+  }
+
   @Post('bitrix/sync-users')
   @Roles(Role.SUPER_ADMIN)
   syncBitrixUsers(@Req() req: { user: JwtPayload }) {
