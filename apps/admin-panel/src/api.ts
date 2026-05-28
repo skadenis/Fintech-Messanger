@@ -143,6 +143,12 @@ export function deleteLine(token: string, id: string) {
   }, token);
 }
 
+export function syncLineHistory(token: string, id: string) {
+  return request<{ success: boolean; syncedChats: number; syncedMessages: number }>(`/api/admin/lines/${id}/sync-history`, {
+    method: 'POST',
+  }, token);
+}
+
 export function syncBitrixUsers(token: string) {
   return request<{ success: boolean; count: number }>('/api/admin/bitrix/sync-users', {
     method: 'POST',

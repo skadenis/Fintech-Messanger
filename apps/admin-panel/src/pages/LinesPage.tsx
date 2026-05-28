@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MessengerType, Role } from '@fintech/shared';
-import { getLines, getGroups, createLine, updateLine, deleteLine } from '../api';
-import { MessageCircle, Edit2, Trash2, Search } from 'lucide-react';
+import { getLines, getGroups, createLine, updateLine, deleteLine, syncLineHistory } from '../api';
+import { MessageCircle, Edit2, Trash2, Search, RefreshCw } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 
 export function LinesPage() {
@@ -15,6 +15,7 @@ export function LinesPage() {
   // Modals
   const [isLineModalOpen, setIsLineModalOpen] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [syncingLineId, setSyncingLineId] = useState<string | null>(null);
 
   const [lineForm, setLineForm] = useState({
     name: '',
@@ -88,6 +89,21 @@ export function LinesPage() {
         triggerRefresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error deleting line');
+      }
+    }
+  };
+
+  const handleSyncHistory = async (line: any) => {
+    if (confirm(`Синхронизировать историю для линии ${line.name}? Это может занять некоторое время.`)) {
+      setSyncingLineId(line.id);
+      try {
+        const result = await syncLineHistory(auth.token, line.id);
+        alert(`Синхронизация завершена!\nЗагружено чатов: ${result.syncedChats}\nЗагружено сообщений: ${result.syncedMessages}`);
+        triggerRefresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error syncing history');
+      } finally {
+        setSyncingLineId(null);
       }
     }
   };
@@ -192,6 +208,18 @@ export function LinesPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleSyncHistory(line)}
+                        disabled={syncingLineId === line.id}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                          syncingLineId === line.id 
+                            ? 'text-[var(--tg-accent)] animate-spin' 
+                            : 'hover:bg-[var(--tg-input)] hover:text-[var(--tg-accent)]'
+                        }`}
+                        title="Синхронизировать историю"
+                      >
+                        <RefreshCw size={16} />
+                      </button>
                       <button
                         onClick={() => handleEditLine(line)}
                         className="w-8 h-8 rounded-full hover:bg-[var(--tg-input)] hover:text-[var(--tg-accent)] flex items-center justify-center transition-colors"
