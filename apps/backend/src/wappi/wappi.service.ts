@@ -39,6 +39,39 @@ export class WappiService {
     return raw;
   }
 
+  private async postWithQuery(
+    line: WappiLine,
+    path: string,
+    params: Record<string, string | number | boolean> = {},
+  ) {
+    const baseUrl = wappiBaseUrl(line.messengerType);
+    const searchParams = new URLSearchParams();
+    searchParams.append('profile_id', line.wappiProfileId);
+    
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        searchParams.append(key, String(value));
+      }
+    }
+
+    const url = `${baseUrl}${path}?${searchParams.toString()}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: line.wappiApiToken,
+      },
+    });
+
+    const raw = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(`Wappi post failed: ${response.status} ${JSON.stringify(raw)}`);
+    }
+
+    return raw;
+  }
+
   private async post(
     line: WappiLine,
     path: string,
@@ -131,10 +164,10 @@ export class WappiService {
         show_all: showAll,
       });
     }
-    return this.post(line, '/sync/chats/get', {
-      limit: String(limit),
-      offset: String(offset),
-      show_all: String(showAll),
+    return this.postWithQuery(line, '/sync/chats/get', {
+      limit,
+      offset,
+      show_all: showAll,
     });
   }
 
