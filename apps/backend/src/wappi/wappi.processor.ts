@@ -144,8 +144,33 @@ export class WappiProcessor extends WorkerHost {
       },
     });
 
-    // Игнорируем реакции и системные сообщения
-    if (payload.type === 'reaction' || payload.type === 'system') {
+    // Обрабатываем реакции
+    if (payload.type === 'reaction') {
+      const stanzaId = typeof payload.stanza_id === 'string' ? payload.stanza_id : null;
+      const emoji = typeof payload.body === 'string' ? payload.body : null;
+      
+      if (stanzaId && emoji) {
+        const updatedMessage = await this.prisma.message.updateMany({
+          where: { wappiMessageId: stanzaId },
+          data: { reaction: emoji },
+        });
+        
+        if (updatedMessage.count > 0) {
+          // Нам нужно получить обновленное сообщение, чтобы отправить его по сокетам
+          const msg = await this.prisma.message.findFirst({
+            where: { wappiMessageId: stanzaId },
+            include: { senderUser: true },
+          });
+          if (msg) {
+            this.eventsGateway.emitNewMessage(lineId, mapMessageDto(msg));
+          }
+        }
+      }
+      return;
+    }
+
+    // Игнорируем системные сообщения
+    if (payload.type === 'system') {
       this.logger.debug(`Ignoring message with type ${payload.type}`);
       return;
     }

@@ -261,6 +261,15 @@ export function MessageBubble({
             <StatusIcon status={message.status} outgoing={outgoing} />
           </div>
         )}
+        {message.reaction && (
+          <div
+            className={`absolute -bottom-3 ${
+              outgoing ? 'left-2' : 'right-2'
+            } bg-[var(--tg-bg)] border border-[var(--tg-border)] rounded-full px-1.5 py-0.5 text-[14px] shadow-sm z-10 leading-none`}
+          >
+            {message.reaction}
+          </div>
+        )}
       </div>
     </div>
   );

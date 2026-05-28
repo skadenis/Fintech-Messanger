@@ -121,6 +121,7 @@ model Message {
   mimeType       String?
   mediaUrl       String?
   status         MessageStatus    @default(PENDING)
+  reaction       String?
   senderUserId   String?
   senderUser     User?            @relation(fields: [senderUserId], references: [id])
   rawPayload     Json?

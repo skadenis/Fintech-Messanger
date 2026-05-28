@@ -115,6 +115,7 @@ export function mapMessageDto(message: {
   fileName?: string | null;
   mimeType?: string | null;
   mediaUrl?: string | null;
+  reaction?: string | null;
   status: string;
   createdAt: Date;
   senderUser?: { name: string } | null;
@@ -133,6 +134,7 @@ export function mapMessageDto(message: {
     fileName: message.fileName ?? parsed.fileName,
     mimeType: message.mimeType ?? parsed.mimeType,
     mediaUrl: message.mediaUrl ?? parsed.mediaUrl,
+    reaction: message.reaction ?? null,
     status: message.status as MessageDto['status'],
     createdAt: message.createdAt.toISOString(),
     senderName: message.senderUser?.name ?? null,

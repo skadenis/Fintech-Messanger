@@ -154,7 +154,9 @@ export default function App() {
     socket.on('message:new', (payload: { lineId: string; message: MessageDto }) => {
       if (payload.message.conversationId === selectedConversationId) {
         setMessages((prev) => {
-          if (prev.some((item) => item.id === payload.message.id)) return prev;
+          if (prev.some((item) => item.id === payload.message.id)) {
+            return prev.map((item) => item.id === payload.message.id ? payload.message : item);
+          }
           return [payload.message, ...prev];
         });
       }

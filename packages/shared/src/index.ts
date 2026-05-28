@@ -109,6 +109,7 @@ export interface MessageDto {
   fileName?: string | null;
   mimeType?: string | null;
   mediaUrl?: string | null;
+  reaction?: string | null;
   status: MessageStatus;
   createdAt: string;
   senderName?: string | null;
