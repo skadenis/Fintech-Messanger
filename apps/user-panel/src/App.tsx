@@ -376,6 +376,7 @@ export default function App() {
         lines={lines}
         selectedLineId={selectedLineId}
         onSelect={selectLine}
+        activeLineIds={contactMode ? conversations.map(c => c.lineId) : undefined}
       />
 
       {!contactMode && auth && (
