@@ -15,7 +15,7 @@ import {
   signIframePayload,
   verifyIframeAuth,
 } from '../common/iframe-auth.utils';
-import { toUserDto } from '../common/utils';
+import { toUserDto, normalizePhone } from '../common/utils';
 import { JwtPayload } from '../common/guards';
 import { PrismaService } from '../prisma/prisma.service';
 import { BitrixService } from '../bitrix/bitrix.service';
@@ -116,10 +116,18 @@ export class AuthService {
 
       // If not found by ID, but we have a phone, search by phone
       if (!conversation && contactPhone) {
-        conversation = await this.prisma.conversation.findFirst({
-          where: { contactPhone: contactPhone },
-          orderBy: { lastMessageAt: 'desc' },
-        });
+        const cleanPhone = normalizePhone(contactPhone);
+        if (cleanPhone) {
+          // We can use contains because cleanPhone might be '79115576368' and DB might have '79115576368' or similar
+          conversation = await this.prisma.conversation.findFirst({
+            where: {
+              contactPhone: {
+                contains: cleanPhone.length > 10 ? cleanPhone.slice(-10) : cleanPhone,
+              },
+            },
+            orderBy: { lastMessageAt: 'desc' },
+          });
+        }
 
         // If we found it by phone and have a contactId, link them
         if (conversation && contactId && !conversation.bitrixContactId) {

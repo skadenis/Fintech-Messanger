@@ -451,11 +451,12 @@ export class AdminService {
         }
       }
 
-      const contactPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+      const rawPhone = chat.phone || chat.contact_phone || chat.number;
+      const fallbackPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
 
       let updateObj: any = { ...updateNameObj };
-      if (contactPhone) {
-        updateObj.contactPhone = contactPhone;
+      if (rawPhone) {
+        updateObj.contactPhone = String(rawPhone);
       }
 
       const conversation = await this.prisma.conversation.upsert({
@@ -472,7 +473,7 @@ export class AdminService {
           lineId: line.id,
           wappiChatId: normalizedChatId,
           contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-          contactPhone,
+          contactPhone: rawPhone ? String(rawPhone) : fallbackPhone,
         },
       });
 
@@ -483,7 +484,13 @@ export class AdminService {
         const messagesResponse = await this.wappiService.getMessages(line, wappiChatId, 100, 0);
         const messages = messagesResponse?.messages || [];
 
+        let foundPhoneInMessages = null;
+
         for (const msg of messages) {
+          if (!foundPhoneInMessages && (msg.contact_phone || msg.phone)) {
+            foundPhoneInMessages = String(msg.contact_phone || msg.phone);
+          }
+
           const wappiMessageId = msg.id;
           if (!wappiMessageId) continue;
 
@@ -538,12 +545,21 @@ export class AdminService {
           syncedMessages++;
         }
 
-        // Обновляем lastMessageAt у диалога
+        // Обновляем lastMessageAt у диалога и телефон, если нашли
+        const updateData: any = {};
         if (messages.length > 0) {
           const lastMsg = messages[0];
+          updateData.lastMessageAt = new Date(lastMsg.time || Date.now());
+        }
+        
+        if (foundPhoneInMessages && foundPhoneInMessages !== fallbackPhone) {
+          updateData.contactPhone = foundPhoneInMessages;
+        }
+
+        if (Object.keys(updateData).length > 0) {
           await this.prisma.conversation.update({
             where: { id: conversation.id },
-            data: { lastMessageAt: new Date(lastMsg.time || Date.now()) },
+            data: updateData,
           });
         }
       } catch (err) {

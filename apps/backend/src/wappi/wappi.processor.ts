@@ -135,9 +135,11 @@ export class WappiProcessor extends WorkerHost {
     }
 
     let updateObj: any = { ...updateNameObj };
-    const contactPhone = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
-    if (contactPhone) {
-      updateObj.contactPhone = contactPhone;
+    const rawPhone = payload.contact_phone || payload.phone;
+    const fallbackPhone = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+    
+    if (rawPhone) {
+      updateObj.contactPhone = String(rawPhone);
     }
 
     const conversation = await this.prisma.conversation.upsert({
@@ -155,7 +157,7 @@ export class WappiProcessor extends WorkerHost {
         lineId,
         wappiChatId: chatId,
         contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-        contactPhone,
+        contactPhone: rawPhone ? String(rawPhone) : fallbackPhone,
       },
     });
 
