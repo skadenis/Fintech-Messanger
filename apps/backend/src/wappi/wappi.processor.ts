@@ -8,6 +8,8 @@ import { WappiService } from './wappi.service';
 import { mapMessageDto, normalizeMessageType } from '../common/media.utils';
 import { resolveContactPhone } from '../common/contact-phone.utils';
 
+import { BitrixService } from '../bitrix/bitrix.service';
+
 export interface WappiEventJobData {
   lineId: string;
   payload: Record<string, any>;
@@ -21,6 +23,7 @@ export class WappiProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly wappiService: WappiService,
     private readonly eventsGateway: EventsGateway,
+    private readonly bitrixService: BitrixService,
   ) {
     super();
   }
@@ -147,8 +150,15 @@ export class WappiProcessor extends WorkerHost {
     });
 
     let updateObj: Record<string, unknown> = { ...updateNameObj };
+    let bitrixContactId: string | null = null;
     if (resolvedPhone) {
       updateObj.contactPhone = resolvedPhone;
+      // Try to link with Bitrix contact if not already linked (we don't have the current conversation state here easily, so we just upsert it)
+      // To avoid too many API calls, we could fetch the conversation first, but upsert is fine.
+      bitrixContactId = await this.bitrixService.findContactByPhone(resolvedPhone);
+      if (bitrixContactId) {
+        updateObj.bitrixContactId = bitrixContactId;
+      }
     }
 
     let msgTime = payload.time || Date.now();
@@ -172,6 +182,7 @@ export class WappiProcessor extends WorkerHost {
         wappiChatId: chatId,
         contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
         contactPhone: resolvedPhone,
+        bitrixContactId,
         lastMessageAt: new Date(msgTime),
       },
     });

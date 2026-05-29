@@ -62,19 +62,57 @@ export class BitrixService {
     }
   }
 
+  async findContactByPhone(phone: string): Promise<string | null> {
+    const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
+    if (!webhookUrl) return null;
+
+    try {
+      const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
+      const url = `${baseUrl}/crm.duplicate.findbycomm.json?entity_type=CONTACT&type=PHONE&values[]=${encodeURIComponent(phone)}`;
+
+      const response = await fetch(url);
+      if (!response.ok) return null;
+
+      const data = await response.json() as any;
+      const result = data?.result;
+      if (!result || !Array.isArray(result.CONTACT) || result.CONTACT.length === 0) {
+        return null;
+      }
+
+      return String(result.CONTACT[0]);
+    } catch (error) {
+      console.error('Failed to find contact by phone in Bitrix:', error);
+      return null;
+    }
+  }
+
   async getAllUsers(): Promise<any[]> {
     const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
     if (!webhookUrl) throw new Error('BITRIX_WEBHOOK_URL is not configured');
 
     try {
       const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
-      const url = `${baseUrl}/user.get.json`;
+      let allUsers: any[] = [];
+      let start = 0;
+      let hasMore = true;
 
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      while (hasMore) {
+        const url = `${baseUrl}/user.get.json?start=${start}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-      const data = await response.json() as any;
-      return data?.result || [];
+        const data = await response.json() as any;
+        const users = data?.result || [];
+        allUsers = allUsers.concat(users);
+
+        if (data?.next) {
+          start = data.next;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      return allUsers;
     } catch (error) {
       console.error('Failed to fetch all users from Bitrix:', error);
       throw error;

@@ -504,6 +504,10 @@ export class AdminService {
       let updateObj: Record<string, unknown> = { ...updateNameObj };
       if (chatPhone) {
         updateObj.contactPhone = chatPhone;
+        const bitrixContactId = await this.bitrixService.findContactByPhone(chatPhone);
+        if (bitrixContactId) {
+          updateObj.bitrixContactId = bitrixContactId;
+        }
       }
 
       // 1. Fetch messages for this chat first to skip empty ones
