@@ -21,6 +21,10 @@ import { BitrixService } from '../bitrix/bitrix.service';
 import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
 import { normalizeMessageType } from '../common/media.utils';
+import {
+  resolveContactPhone,
+  sanitizeStoredContactPhone,
+} from '../common/contact-phone.utils';
 
 @Injectable()
 export class AdminService {
@@ -402,6 +406,45 @@ export class AdminService {
     return { success: true, count: syncedCount };
   }
 
+  async listConversations(user: JwtPayload) {
+    this.assertAdmin(user);
+
+    const lineScope =
+      user.role === Role.SUPER_ADMIN
+        ? {}
+        : user.groupId
+          ? { groupId: user.groupId }
+          : { groupId: '__none__' };
+
+    const rows = await this.prisma.conversation.findMany({
+      where: { line: lineScope },
+      include: {
+        line: true,
+        _count: { select: { messages: true } },
+      },
+      orderBy: { lastMessageAt: 'desc' },
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      lineId: row.lineId,
+      lineName: row.line.name,
+      lineProfileId: row.line.wappiProfileId,
+      messengerType: row.line.messengerType,
+      wappiChatId: row.wappiChatId,
+      contactName: row.contactName,
+      contactPhone: sanitizeStoredContactPhone(
+        row.contactPhone,
+        row.line.name,
+        row.wappiChatId,
+        row.line.messengerType,
+      ),
+      bitrixContactId: row.bitrixContactId,
+      lastMessageAt: row.lastMessageAt.toISOString(),
+      messagesCount: row._count.messages,
+    }));
+  }
+
   async syncLineHistory(user: JwtPayload, lineId: string) {
     if (user.role !== Role.SUPER_ADMIN) {
       throw new ForbiddenException('Only super admin can sync history');
@@ -451,12 +494,29 @@ export class AdminService {
         }
       }
 
-      const rawPhone = chat.phone || chat.contact_phone || chat.number;
-      const fallbackPhone = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+      const chatPhone = sanitizeStoredContactPhone(
+        chat.phone || chat.contact_phone || chat.number || null,
+        line.name,
+        normalizedChatId,
+        line.messengerType,
+      );
 
-      let updateObj: any = { ...updateNameObj };
-      if (rawPhone) {
-        updateObj.contactPhone = String(rawPhone);
+      let updateObj: Record<string, unknown> = { ...updateNameObj };
+      if (chatPhone) {
+        updateObj.contactPhone = chatPhone;
+      }
+
+      // 1. Fetch messages for this chat first to skip empty ones
+      let messages: any[] = [];
+      try {
+        const messagesResponse = await this.wappiService.getMessages(line, wappiChatId, 100, 0);
+        messages = messagesResponse?.messages || [];
+      } catch (err) {
+        console.error(`Failed to fetch messages for chat ${normalizedChatId}: ${err}`);
+      }
+
+      if (messages.length === 0) {
+        continue; // Skip empty chats
       }
 
       const conversation = await this.prisma.conversation.upsert({
@@ -473,22 +533,28 @@ export class AdminService {
           lineId: line.id,
           wappiChatId: normalizedChatId,
           contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-          contactPhone: rawPhone ? String(rawPhone) : fallbackPhone,
+          contactPhone: chatPhone,
         },
       });
 
       syncedChats++;
 
-      // 2. Fetch messages for this chat
+      // 2. Process messages
       try {
-        const messagesResponse = await this.wappiService.getMessages(line, wappiChatId, 100, 0);
-        const messages = messagesResponse?.messages || [];
-
-        let foundPhoneInMessages = null;
+        let foundPhoneInMessages: string | null = null;
 
         for (const msg of messages) {
-          if (!foundPhoneInMessages && (msg.contact_phone || msg.phone)) {
-            foundPhoneInMessages = String(msg.contact_phone || msg.phone);
+          if (!foundPhoneInMessages) {
+            const direction = msg.fromMe
+              ? MessageDirection.OUTGOING
+              : MessageDirection.INCOMING;
+            foundPhoneInMessages = resolveContactPhone({
+              linePhone: line.name,
+              chatId: normalizedChatId,
+              direction,
+              payload: msg as Record<string, unknown>,
+              messengerType: line.messengerType,
+            });
           }
 
           const wappiMessageId = msg.id;
@@ -549,10 +615,14 @@ export class AdminService {
         const updateData: any = {};
         if (messages.length > 0) {
           const lastMsg = messages[0];
-          updateData.lastMessageAt = new Date(lastMsg.time || Date.now());
+          let msgTime = lastMsg.time || Date.now();
+          if (typeof msgTime === 'number' && msgTime < 10000000000) {
+            msgTime = msgTime * 1000;
+          }
+          updateData.lastMessageAt = new Date(msgTime);
         }
         
-        if (foundPhoneInMessages && foundPhoneInMessages !== fallbackPhone) {
+        if (foundPhoneInMessages) {
           updateData.contactPhone = foundPhoneInMessages;
         }
 

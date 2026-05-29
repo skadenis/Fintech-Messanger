@@ -211,3 +211,17 @@ export interface UpdateLineRequest {
 export interface AssignLinesRequest {
   lineIds: string[];
 }
+
+export interface AdminConversationDto {
+  id: string;
+  lineId: string;
+  lineName: string;
+  lineProfileId: string;
+  messengerType: MessengerType;
+  wappiChatId: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  bitrixContactId?: string | null;
+  lastMessageAt: string;
+  messagesCount: number;
+}

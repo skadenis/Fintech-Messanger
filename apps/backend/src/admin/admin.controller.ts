@@ -92,6 +92,11 @@ export class AdminController {
     return this.adminService.listLines(req.user);
   }
 
+  @Get('conversations')
+  listConversations(@Req() req: { user: JwtPayload }) {
+    return this.adminService.listConversations(req.user);
+  }
+
   @Post('lines')
   createLine(@Req() req: { user: JwtPayload }, @Body() dto: CreateLineRequest) {
     return this.adminService.createLine(req.user, dto);

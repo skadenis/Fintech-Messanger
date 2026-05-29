@@ -1,4 +1,5 @@
 import {
+  AdminConversationDto,
   AuthResponse,
   CreateGroupRequest,
   CreateLineRequest,
@@ -153,4 +154,8 @@ export function syncBitrixUsers(token: string) {
   return request<{ success: boolean; count: number }>('/api/admin/bitrix/sync-users', {
     method: 'POST',
   }, token);
+}
+
+export function getConversations(token: string) {
+  return request<AdminConversationDto[]>('/api/admin/conversations', {}, token);
 }

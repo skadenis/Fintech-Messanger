@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from './wappi.service';
 import { mapMessageDto, normalizeMessageType } from '../common/media.utils';
+import { resolveContactPhone } from '../common/contact-phone.utils';
 
 export interface WappiEventJobData {
   lineId: string;
@@ -134,12 +135,25 @@ export class WappiProcessor extends WorkerHost {
       }
     }
 
-    let updateObj: any = { ...updateNameObj };
-    const rawPhone = payload.contact_phone || payload.phone;
-    const fallbackPhone = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
-    
-    if (rawPhone) {
-      updateObj.contactPhone = String(rawPhone);
+    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
+    if (!line) return;
+
+    const resolvedPhone = resolveContactPhone({
+      linePhone: line.name,
+      chatId,
+      direction,
+      payload,
+      messengerType: line.messengerType,
+    });
+
+    let updateObj: Record<string, unknown> = { ...updateNameObj };
+    if (resolvedPhone) {
+      updateObj.contactPhone = resolvedPhone;
+    }
+
+    let msgTime = payload.time || Date.now();
+    if (typeof msgTime === 'number' && msgTime < 10000000000) {
+      msgTime = msgTime * 1000;
     }
 
     const conversation = await this.prisma.conversation.upsert({
@@ -151,13 +165,14 @@ export class WappiProcessor extends WorkerHost {
       },
       update: {
         ...updateObj,
-        lastMessageAt: new Date(),
+        lastMessageAt: new Date(msgTime),
       },
       create: {
         lineId,
         wappiChatId: chatId,
         contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-        contactPhone: rawPhone ? String(rawPhone) : fallbackPhone,
+        contactPhone: resolvedPhone,
+        lastMessageAt: new Date(msgTime),
       },
     });
 

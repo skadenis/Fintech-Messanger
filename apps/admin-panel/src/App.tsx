@@ -6,6 +6,7 @@ import { AdminLayout } from './layouts/AdminLayout';
 import { UsersPage } from './pages/UsersPage';
 import { GroupsPage } from './pages/GroupsPage';
 import { LinesPage } from './pages/LinesPage';
+import { ConversationsPage } from './pages/ConversationsPage';
 
 function ProtectedRoute({ auth }: { auth: AuthResponse | null }) {
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="/users" element={<UsersPage />} />
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/lines" element={<LinesPage />} />
+            <Route path="/conversations" element={<ConversationsPage />} />
           </Route>
         </Route>
         

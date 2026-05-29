@@ -8,6 +8,7 @@ import { MessengerType, StartConversationRequest } from '@fintech/shared';
 import { AccessService } from '../common/access.service';
 import { messagePreviewLabel } from '../common/media.utils';
 import { JwtPayload } from '../common/guards';
+import { sanitizeStoredContactPhone } from '../common/contact-phone.utils';
 import { formatChatId, phonesMatch } from '../common/utils';
 import { MessagesService } from '../messages/messages.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,7 +30,7 @@ export class ConversationsService {
       contactPhone: string | null;
       bitrixContactId: string | null;
       lastMessageAt: Date;
-      line: { name: string; messengerType: string };
+      line: { name: string; messengerType: string; wappiProfileId: string };
     },
     lastMessagePreview?: string | null,
   ) {
@@ -40,7 +41,12 @@ export class ConversationsService {
       messengerType: conversation.line.messengerType as MessengerType,
       wappiChatId: conversation.wappiChatId,
       contactName: conversation.contactName,
-      contactPhone: conversation.contactPhone,
+      contactPhone: sanitizeStoredContactPhone(
+        conversation.contactPhone,
+        conversation.line.name,
+        conversation.wappiChatId,
+        conversation.line.messengerType,
+      ),
       bitrixContactId: conversation.bitrixContactId,
       lastMessageAt: conversation.lastMessageAt.toISOString(),
       lastMessagePreview: lastMessagePreview ?? null,

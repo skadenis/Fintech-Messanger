@@ -1,6 +1,6 @@
 import { AuthResponse, Role } from '@fintech/shared';
 import { NavLink, Outlet, useNavigate, useOutletContext } from 'react-router-dom';
-import { Users, FolderTree, MessageCircle, LogOut } from 'lucide-react';
+import { Users, FolderTree, MessageCircle, MessagesSquare, LogOut } from 'lucide-react';
 
 interface AdminLayoutProps {
   auth: AuthResponse;
@@ -20,6 +20,7 @@ export function AdminLayout({ auth, onLogout }: AdminLayoutProps) {
     { to: '/users', icon: Users, label: 'Пользователи' },
     { to: '/groups', icon: FolderTree, label: 'Группы', roles: [Role.SUPER_ADMIN] },
     { to: '/lines', icon: MessageCircle, label: 'Линии Wappi' },
+    { to: '/conversations', icon: MessagesSquare, label: 'Все диалоги' },
   ];
 
   return (
