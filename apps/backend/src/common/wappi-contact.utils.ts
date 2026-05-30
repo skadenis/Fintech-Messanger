@@ -32,32 +32,122 @@ export interface WappiContactGetParams {
   phone?: string;
 }
 
+/**
+ * MAX peer user id from incoming messages (`from` when it is not a mobile number).
+ * Dialog chat_id and contact id differ on MAX — do not use chat_id as recipient.
+ */
+export function resolveMaxPeerUserIdFromMessages(
+  messages: Record<string, unknown>[],
+  excludedPhones: string[],
+): string | null {
+  const counts = new Map<string, number>();
+
+  for (const msg of messages) {
+    if (msg.fromMe) continue;
+    const raw = msg.from;
+    const id =
+      typeof raw === 'number'
+        ? String(raw)
+        : typeof raw === 'string'
+          ? raw.trim()
+          : '';
+    if (!id || !/^\d+$/.test(id)) continue;
+    if (isExcludedPhone(id, excludedPhones)) continue;
+    if (looksLikePhoneNumber(id)) continue;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+
+  const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return best?.[0] ?? null;
+}
+
+/** Wappi placeholder name on outbound-only MAX dialogs: "Contact 285813302" → user id 285813302. */
+export function parseMaxContactNameUserId(
+  contactName: string | null | undefined,
+): string | null {
+  if (!contactName) return null;
+  const match = /^Contact\s+(\d+)$/i.exec(contactName.trim());
+  return match?.[1] ?? null;
+}
+
+export function resolveMaxContactNameUserIdFromMessages(
+  messages: Record<string, unknown>[],
+): string | null {
+  for (const msg of messages) {
+    const fromName =
+      typeof msg.contact_name === 'string' ? msg.contact_name : null;
+    const id = parseMaxContactNameUserId(fromName);
+    if (id) return id;
+  }
+  return null;
+}
+
+const MAX_BOT_SYSTEM_BODY =
+  /бот\s+начал|bot\s+started|присылать\s+уведомлен/i;
+
+/** MAX service/bot dialogs — skip history sync and contact/get. */
+export function isMaxBotChat(
+  messages: Record<string, unknown>[],
+  chat?: Record<string, unknown>,
+): boolean {
+  if (chat) {
+    const name = String(chat.name ?? chat.pushname ?? '').trim();
+    if (/^бот$/i.test(name) || /^bot$/i.test(name)) return true;
+  }
+
+  for (const msg of messages) {
+    if (String(msg.type ?? '').toLowerCase() !== 'system') continue;
+    const body = String(msg.body ?? '');
+    if (MAX_BOT_SYSTEM_BODY.test(body)) return true;
+  }
+
+  return false;
+}
+
+/** Ordered MAX strategies for contact/get: phone first, then peer user ids (not dialog chat_id). */
+export function buildMaxContactGetAttempts(
+  hintPhone: string | null | undefined,
+  recipientIds: (string | null | undefined)[],
+  excludedPhones: string[] = [],
+): WappiContactGetParams[] {
+  const attempts: WappiContactGetParams[] = [];
+
+  if (
+    hintPhone &&
+    looksLikePhoneNumber(hintPhone) &&
+    !isExcludedPhone(hintPhone, excludedPhones)
+  ) {
+    attempts.push({ phone: normalizePhone(hintPhone) });
+  }
+
+  const seen = new Set<string>();
+  for (const rawId of recipientIds) {
+    const peer = rawId?.trim();
+    if (!peer || !/^\d+$/.test(peer) || looksLikePhoneNumber(peer) || seen.has(peer)) {
+      continue;
+    }
+    seen.add(peer);
+    attempts.push({ recipient: peer });
+  }
+
+  return attempts;
+}
+
 /** Query params for GET /sync/contact/get — MAX supports recipient (id) or phone */
 export function buildContactGetParams(
   chatId: string,
   messengerType: string,
   hintPhone?: string | null,
   excludedPhones: string[] = [],
+  recipientIds: (string | null | undefined)[] = [],
 ): WappiContactGetParams {
   if (messengerType === 'MAX') {
-    const bareId = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '').trim();
-    const normalizedHint =
-      hintPhone &&
-      looksLikePhoneNumber(hintPhone) &&
-      !isExcludedPhone(hintPhone, excludedPhones)
-        ? normalizePhone(hintPhone)
-        : null;
-
-    if (bareId && looksLikePhoneNumber(bareId) && !isExcludedPhone(bareId, excludedPhones)) {
-      return { phone: normalizePhone(bareId) };
-    }
-    if (normalizedHint) {
-      return { phone: normalizedHint };
-    }
-    if (bareId && /^\d+$/.test(bareId)) {
-      return { recipient: bareId };
-    }
-    return bareId ? { recipient: bareId } : {};
+    const attempts = buildMaxContactGetAttempts(
+      hintPhone,
+      recipientIds,
+      excludedPhones,
+    );
+    return attempts[0] ?? {};
   }
 
   return { recipient: wappiContactRecipient(chatId, messengerType) };
@@ -165,9 +255,11 @@ export function parseWappiContactResponse(
 
   let contactPhone: string | null = null;
   if (messengerType === 'MAX') {
-    contactPhone =
-      readContactPhoneField(data.phone, excludedPhones) ??
-      readContactPhoneField(data.number, excludedPhones);
+    const rawPhone = data.phone ?? data.number;
+    contactPhone = readContactPhoneField(rawPhone, excludedPhones);
+    if (!contactPhone && typeof rawPhone === 'number') {
+      contactPhone = readContactPhoneField(String(rawPhone), excludedPhones);
+    }
   } else {
     contactPhone =
       readContactPhoneField(data.number, excludedPhones) ??

@@ -10,11 +10,16 @@ import {
   isExcludedPhone,
   resolveContactPhone,
   resolveLineOwnerPhoneFromPayload,
+  resolvePhoneFromMessageBodies,
 } from '../common/contact-phone.utils';
 import {
+  buildMaxContactGetAttempts,
   parseWappiContactResponse,
   buildContactGetParams,
+  isMaxBotChat,
   normalizeWappiChatId,
+  parseMaxContactNameUserId,
+  resolveMaxPeerUserIdFromMessages,
 } from '../common/wappi-contact.utils';
 
 import { BitrixService } from '../bitrix/bitrix.service';
@@ -129,6 +134,11 @@ export class WappiProcessor extends WorkerHost {
       return;
     }
 
+    if (line.messengerType === 'MAX' && isMaxBotChat([payload])) {
+      this.logger.debug(`Ignoring MAX bot/system chat: ${chatId}`);
+      return;
+    }
+
     const direction =
       whType === 'incoming_message'
         ? MessageDirection.INCOMING
@@ -168,7 +178,10 @@ export class WappiProcessor extends WorkerHost {
       !contactPhone ||
       isExcludedPhone(contactPhone, linePhones);
 
-    if (needsContactFetch) {
+    const skipMaxBotContact =
+      line.messengerType === 'MAX' && isMaxBotChat([payload]);
+
+    if (needsContactFetch && !skipMaxBotContact) {
       try {
         const phoneFromPayload = resolveContactPhone({
           excludedPhones: linePhones,
@@ -179,33 +192,52 @@ export class WappiProcessor extends WorkerHost {
         });
         const hintPhone =
           phoneFromPayload ??
+          (line.messengerType === 'MAX'
+            ? resolvePhoneFromMessageBodies([payload], linePhones)
+            : null) ??
           (typeof payload.contact_phone === 'string'
             ? payload.contact_phone
             : undefined);
 
-        const contactParams = buildContactGetParams(
-          chatId,
-          line.messengerType,
-          hintPhone,
-          linePhones,
-        );
-        if (!contactParams.recipient && !contactParams.phone) {
-          throw new Error('No recipient or phone for getContact');
-        }
-        let contactResponse = await this.wappiService.getContact(
-          line,
-          contactParams,
-        );
-        if (
-          line.messengerType === 'MAX' &&
-          !contactResponse &&
-          hintPhone &&
-          contactParams.recipient &&
-          !contactParams.phone
-        ) {
-          contactResponse = await this.wappiService.getContact(line, {
-            phone: hintPhone,
-          });
+        const peerUserId =
+          line.messengerType === 'MAX' && direction === MessageDirection.INCOMING
+            ? resolveMaxPeerUserIdFromMessages([payload], linePhones)
+            : null;
+        const contactNameUserId =
+          line.messengerType === 'MAX'
+            ? parseMaxContactNameUserId(
+                typeof payload.contact_name === 'string'
+                  ? payload.contact_name
+                  : null,
+              )
+            : null;
+
+        let contactResponse: Record<string, unknown> | null = null;
+
+        if (line.messengerType === 'MAX') {
+          const attempts = buildMaxContactGetAttempts(
+            hintPhone,
+            [peerUserId, contactNameUserId],
+            linePhones,
+          );
+          for (const params of attempts) {
+            contactResponse = await this.wappiService.getContact(line, params);
+            if (contactResponse) break;
+          }
+        } else {
+          const contactParams = buildContactGetParams(
+            chatId,
+            line.messengerType,
+            hintPhone,
+            linePhones,
+          );
+          if (!contactParams.recipient && !contactParams.phone) {
+            throw new Error('No recipient or phone for getContact');
+          }
+          contactResponse = await this.wappiService.getContact(
+            line,
+            contactParams,
+          );
         }
         if (contactResponse) {
           const parsed = parseWappiContactResponse(

@@ -25,13 +25,17 @@ import { runPool } from '../common/async-pool';
 import {
   detectLinePhonesFromMessages,
   resolveContactPhoneFromMessages,
+  resolvePhoneFromMessageBodies,
   sanitizeStoredContactPhone,
 } from '../common/contact-phone.utils';
 import {
+  buildMaxContactGetAttempts,
   isGroupOrChannelChat,
+  isMaxBotChat,
   normalizeWappiChatId,
   parseWappiContactResponse,
-  buildContactGetParams,
+  resolveMaxContactNameUserIdFromMessages,
+  resolveMaxPeerUserIdFromMessages,
   dedupeWappiDialogs,
   readChatLastMessageTime,
   readPhoneFromChatMetadata,
@@ -650,6 +654,16 @@ export class AdminService {
       rawChatId,
     );
 
+    if (line.messengerType === 'MAX' && isMaxBotChat(messages, chat)) {
+      if (isWappiHttpLogEnabled()) {
+        this.wappiHttpFileLog.logSyncPhone(line, normalizedChatId, {
+          reason: 'skipped_max_bot_chat',
+          messageCount: messages.length,
+        });
+      }
+      return { chats: 0, messages: 0 };
+    }
+
     const linePhones = detectLinePhonesFromMessages(messages);
     const fromMessages = resolveContactPhoneFromMessages(
       messages,
@@ -657,28 +671,39 @@ export class AdminService {
       line.messengerType,
     );
     const fromChatMeta = readPhoneFromChatMetadata(chat, linePhones);
-    const hintPhone = fromMessages ?? fromChatMeta;
+    const fromBodies =
+      line.messengerType === 'MAX'
+        ? resolvePhoneFromMessageBodies(messages, linePhones)
+        : null;
+    const hintPhone = fromMessages ?? fromChatMeta ?? fromBodies;
+    const peerUserId =
+      line.messengerType === 'MAX'
+        ? resolveMaxPeerUserIdFromMessages(messages, linePhones)
+        : null;
+    const contactNameUserId =
+      line.messengerType === 'MAX'
+        ? resolveMaxContactNameUserIdFromMessages(messages)
+        : null;
 
-    const contactParams = buildContactGetParams(
-      normalizedChatId,
-      line.messengerType,
-      hintPhone ?? undefined,
-      linePhones,
-    );
+    let contactResponse: Record<string, unknown> | null = null;
+    let contactParams: { recipient?: string; phone?: string } = {};
 
-    let contactResponse = await this.wappiService.getContact(line, contactParams);
-
-    // MAX: retry contact/get by phone if recipient=id returned nothing.
-    if (
-      line.messengerType === 'MAX' &&
-      !contactResponse &&
-      hintPhone &&
-      contactParams.recipient &&
-      !contactParams.phone
-    ) {
-      contactResponse = await this.wappiService.getContact(line, {
-        phone: hintPhone,
-      });
+    if (line.messengerType === 'MAX') {
+      const attempts = buildMaxContactGetAttempts(
+        hintPhone ?? undefined,
+        [peerUserId, contactNameUserId],
+        linePhones,
+      );
+      for (const params of attempts) {
+        contactParams = params;
+        contactResponse = await this.wappiService.getContact(line, params);
+        if (contactResponse) break;
+      }
+    } else {
+      contactParams = {
+        recipient: normalizeWappiChatId(normalizedChatId, line.messengerType),
+      };
+      contactResponse = await this.wappiService.getContact(line, contactParams);
     }
 
     const parsed = parseWappiContactResponse(
@@ -702,11 +727,14 @@ export class AdminService {
       this.wappiHttpFileLog.logSyncPhone(line, normalizedChatId, {
         reason: 'no_phone_resolved',
         contactParams,
+        peerUserId,
+        contactNameUserId,
         parsedContact: { phone: parsed.contactPhone, name: parsed.contactName },
         linePhones,
         messageCount: messages.length,
         fromMessages,
         fromChatMeta,
+        fromBodies,
         chatMeta: {
           phone: chat.phone,
           number: chat.number,

@@ -105,6 +105,29 @@ export function resolveContactPhoneFromMessages(
   return null;
 }
 
+/** Phones embedded in message text (e.g. signature in outbound templates). */
+export function resolvePhoneFromMessageBodies(
+  messages: Record<string, unknown>[],
+  excludedPhones: string[],
+): string | null {
+  const pattern =
+    /(?:\+?7|8)[\s\-()]*(?:\d[\s\-()]*){10}|\b7\d{10}\b|\b8\d{10}\b/g;
+
+  for (const msg of messages) {
+    const body = msg.body;
+    if (typeof body !== 'string' || !body.trim()) continue;
+
+    for (const match of body.matchAll(pattern)) {
+      const digits = normalizePhone(match[0].replace(/\D/g, ''));
+      if (!digits || !looksLikePhoneNumber(digits)) continue;
+      if (isExcludedPhone(digits, excludedPhones)) continue;
+      return digits;
+    }
+  }
+
+  return null;
+}
+
 export function extractPhoneFromChatId(chatId: string, messengerType?: string): string | null {
   if (messengerType === 'TELEGRAM' || messengerType === 'MAX') return null;
   
