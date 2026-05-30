@@ -22,12 +22,17 @@ import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
 import { normalizeMessageType } from '../common/media.utils';
 import { runPool } from '../common/async-pool';
-import { sanitizeStoredContactPhone } from '../common/contact-phone.utils';
+import {
+  detectLinePhonesFromMessages,
+  resolveContactPhoneFromMessages,
+  sanitizeStoredContactPhone,
+} from '../common/contact-phone.utils';
 import {
   isGroupOrChannelChat,
   normalizeWappiChatId,
   parseWappiContactResponse,
   buildContactGetParams,
+  dedupeWappiDialogs,
 } from '../common/wappi-contact.utils';
 import { WappiLine } from '@prisma/client';
 
@@ -469,6 +474,8 @@ export class AdminService {
       where: this.lineScopeWhere(user),
     });
 
+    await this.wipeConversationsForLines(lines.map((line) => line.id));
+
     const tasks: Array<{ line: WappiLine; chat: Record<string, unknown> }> = [];
 
     for (const line of lines) {
@@ -506,6 +513,8 @@ export class AdminService {
       throw new NotFoundException('Line not found');
     }
 
+    await this.wipeConversationsForLines([line.id]);
+
     const dialogs = await this.fetchLineDialogs(line);
     const tasks = dialogs.map((chat) => ({ line, chat }));
 
@@ -521,14 +530,33 @@ export class AdminService {
     return { success: true, syncedChats, syncedMessages };
   }
 
+  private async wipeConversationsForLines(lineIds: string[]) {
+    if (lineIds.length === 0) return;
+
+    const conversations = await this.prisma.conversation.findMany({
+      where: { lineId: { in: lineIds } },
+      select: { id: true },
+    });
+    const conversationIds = conversations.map((c) => c.id);
+    if (conversationIds.length === 0) return;
+
+    await this.prisma.message.deleteMany({
+      where: { conversationId: { in: conversationIds } },
+    });
+    await this.prisma.conversation.deleteMany({
+      where: { id: { in: conversationIds } },
+    });
+  }
+
   private async fetchLineDialogs(line: WappiLine): Promise<Record<string, unknown>[]> {
     try {
       const chatsResponse = await this.wappiService.getChats(line, 200, 0, true);
       const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
-      return dialogs.filter((chat) => {
+      const filtered = dialogs.filter((chat) => {
         const id = String(chat.id ?? '');
         return id && !isGroupOrChannelChat(id, chat);
       });
+      return dedupeWappiDialogs(filtered, line.messengerType);
     } catch (err) {
       console.error(`Failed to fetch chats for line ${line.id} (${line.name}):`, err);
       return [];
@@ -564,36 +592,43 @@ export class AdminService {
     line: WappiLine,
     chat: Record<string, unknown>,
   ): Promise<{ chats: number; messages: number }> {
-    const rawChatId = String(chat.id);
-    const normalizedChatId = normalizeWappiChatId(rawChatId, line.messengerType);
-    const contactParams = buildContactGetParams(
-      normalizedChatId,
+    const normalizedChatId = normalizeWappiChatId(
+      String(chat.id),
       line.messengerType,
-      (chat.phone || chat.number || chat.contact_phone) as string | undefined,
     );
 
-    const [messages, contactResponse] = await Promise.all([
-      this.fetchAllChatMessages(line, rawChatId).catch((err) => {
+    const messages = await this.fetchAllChatMessages(line, normalizedChatId).catch(
+      (err) => {
         console.error(`Failed to fetch messages for chat ${normalizedChatId}: ${err}`);
         return [] as Record<string, unknown>[];
-      }),
-      contactParams.recipient || contactParams.phone
-        ? this.wappiService.getContact(line, contactParams).catch((err) => {
-            console.error(
-              `Failed to fetch contact ${JSON.stringify(contactParams)}: ${err}`,
-            );
-            return null;
-          })
-        : Promise.resolve(null),
-    ]);
+      },
+    );
 
     if (messages.length === 0) {
       return { chats: 0, messages: 0 };
     }
 
+    const linePhones = detectLinePhonesFromMessages(messages);
+    const contactParams = buildContactGetParams(
+      normalizedChatId,
+      line.messengerType,
+      (chat.phone || chat.number || chat.contact_phone) as string | undefined,
+      linePhones,
+    );
+
+    const contactResponse =
+      contactParams.recipient || contactParams.phone
+        ? await this.wappiService.getContact(line, contactParams).catch((err) => {
+            console.error(
+              `Failed to fetch contact ${JSON.stringify(contactParams)}: ${err}`,
+            );
+            return null;
+          })
+        : null;
+
     const parsed = parseWappiContactResponse(
       contactResponse as Record<string, unknown> | null,
-      line.wappiProfileId,
+      linePhones,
       line.messengerType,
     );
 
@@ -605,12 +640,16 @@ export class AdminService {
       }
     }
 
+    let contactPhone =
+      parsed.contactPhone ??
+      resolveContactPhoneFromMessages(messages, linePhones, line.messengerType);
+
     const updateData: Record<string, unknown> = {};
     if (contactName) updateData.contactName = contactName;
-    if (parsed.contactPhone) {
-      updateData.contactPhone = parsed.contactPhone;
+    if (contactPhone) {
+      updateData.contactPhone = contactPhone;
       const bitrixContactId = await this.bitrixService.findContactByPhone(
-        parsed.contactPhone,
+        contactPhone,
       );
       if (bitrixContactId) updateData.bitrixContactId = bitrixContactId;
     }
@@ -627,7 +666,7 @@ export class AdminService {
         lineId: line.id,
         wappiChatId: normalizedChatId,
         contactName: contactName ?? null,
-        contactPhone: parsed.contactPhone,
+        contactPhone,
         bitrixContactId:
           typeof updateData.bitrixContactId === 'string'
             ? updateData.bitrixContactId

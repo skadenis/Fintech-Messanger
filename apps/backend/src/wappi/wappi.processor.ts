@@ -6,10 +6,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from './wappi.service';
 import { mapMessageDto, normalizeMessageType } from '../common/media.utils';
-import { isLinePhone } from '../common/contact-phone.utils';
+import {
+  isExcludedPhone,
+  resolveContactPhone,
+  resolveLineOwnerPhoneFromPayload,
+} from '../common/contact-phone.utils';
 import {
   parseWappiContactResponse,
   buildContactGetParams,
+  normalizeWappiChatId,
 } from '../common/wappi-contact.utils';
 
 import { BitrixService } from '../bitrix/bitrix.service';
@@ -110,22 +115,26 @@ export class WappiProcessor extends WorkerHost {
 
     if (!chatId) return;
 
+    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
+    if (!line) return;
+
+    chatId = normalizeWappiChatId(chatId, line.messengerType);
+
     // Игнорируем каналы и группы (Telegram ID с минусом, WhatsApp @g.us или @broadcast)
     if (chatId.startsWith('-') || chatId.includes('@g.us') || chatId.includes('@broadcast')) {
       this.logger.debug(`Ignoring channel/group chat: ${chatId}`);
       return;
     }
 
-    // В Wappi chatId часто приходит просто как номер (напр. '1820755' или '79115576368'). 
-    // Нормализуем его до стандартного вида WhatsApp (чтобы не дублировать чаты)
-    if (!chatId.includes('@')) {
-      chatId = `${chatId}@c.us`;
-    }
-
     const direction =
       whType === 'incoming_message'
         ? MessageDirection.INCOMING
         : MessageDirection.OUTGOING;
+
+    const linePhones = (() => {
+      const fromPayload = resolveLineOwnerPhoneFromPayload(payload, direction);
+      return fromPayload ? [fromPayload] : [];
+    })();
 
     let contactName = typeof payload.contact_name === 'string' && payload.contact_name
             ? payload.contact_name
@@ -142,9 +151,6 @@ export class WappiProcessor extends WorkerHost {
       }
     }
 
-    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
-    if (!line) return;
-
     const existingConversation = await this.prisma.conversation.findUnique({
       where: { lineId_wappiChatId: { lineId, wappiChatId: chatId } },
       select: { contactPhone: true, contactName: true, bitrixContactId: true },
@@ -157,11 +163,16 @@ export class WappiProcessor extends WorkerHost {
     const needsContactFetch =
       !existingConversation?.contactName ||
       !contactPhone ||
-      isLinePhone(contactPhone, line.wappiProfileId);
+      isExcludedPhone(contactPhone, linePhones);
 
     if (needsContactFetch) {
       try {
-        const contactParams = buildContactGetParams(chatId, line.messengerType);
+        const contactParams = buildContactGetParams(
+          chatId,
+          line.messengerType,
+          (payload.contact_phone || payload.phone) as string | undefined,
+          linePhones,
+        );
         if (!contactParams.recipient && !contactParams.phone) {
           throw new Error('No recipient or phone for getContact');
         }
@@ -171,7 +182,7 @@ export class WappiProcessor extends WorkerHost {
         );
         const parsed = parseWappiContactResponse(
           contactResponse as Record<string, unknown>,
-          line.wappiProfileId,
+          linePhones,
           line.messengerType,
         );
 
@@ -190,6 +201,26 @@ export class WappiProcessor extends WorkerHost {
         }
       } catch (err) {
         this.logger.debug(`getContact failed for ${chatId}: ${err}`);
+      }
+    }
+
+    if (!contactPhone || isExcludedPhone(contactPhone, linePhones)) {
+      const fromPayload = resolveContactPhone({
+        excludedPhones: linePhones,
+        chatId,
+        direction,
+        payload,
+        messengerType: line.messengerType,
+      });
+      if (fromPayload) {
+        contactPhone = fromPayload;
+        updateObj.contactPhone = contactPhone;
+        if (!bitrixContactId) {
+          bitrixContactId = await this.bitrixService.findContactByPhone(contactPhone);
+          if (bitrixContactId) {
+            updateObj.bitrixContactId = bitrixContactId;
+          }
+        }
       }
     }
 

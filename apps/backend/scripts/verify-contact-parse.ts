@@ -3,7 +3,7 @@ import {
   parseWappiContactResponse,
 } from '../src/common/wappi-contact.utils';
 
-const lineProfile = '79055734880';
+const linePhones = ['79055734880'];
 
 const maxResponse = {
   status: 'done',
@@ -26,10 +26,10 @@ const waResponse = {
   },
 };
 
-const maxParsed = parseWappiContactResponse(maxResponse, lineProfile, 'MAX');
-const waParsed = parseWappiContactResponse(waResponse, lineProfile, 'WHATSAPP');
-const maxParams = buildContactGetParams('48430660@c.us', 'MAX');
-const waParams = buildContactGetParams('79115576367@c.us', 'WHATSAPP');
+const maxParsed = parseWappiContactResponse(maxResponse, linePhones, 'MAX');
+const waParsed = parseWappiContactResponse(waResponse, linePhones, 'WHATSAPP');
+const maxParams = buildContactGetParams('48430660@c.us', 'MAX', undefined, linePhones);
+const waParams = buildContactGetParams('79115576367@c.us', 'WHATSAPP', undefined, linePhones);
 
 const checks = [
   ['MAX phone', maxParsed.contactPhone === '79816593725'],
@@ -37,7 +37,7 @@ const checks = [
   ['MAX recipient param', maxParams.recipient === '48430660'],
   ['WA phone', waParsed.contactPhone === '79115576367'],
   ['WA name', waParsed.contactName === 'Макс Моряк ⚓'],
-  ['WA skips line phone', waParsed.contactPhone !== lineProfile],
+  ['WA skips line phone', waParsed.contactPhone !== linePhones[0]],
 ];
 
 let failed = 0;

@@ -1,6 +1,6 @@
 import {
   extractPhoneFromChatId,
-  isLinePhone,
+  isExcludedPhone,
   looksLikePhoneNumber,
 } from './contact-phone.utils';
 import { normalizePhone } from './utils';
@@ -37,13 +37,18 @@ export function buildContactGetParams(
   chatId: string,
   messengerType: string,
   hintPhone?: string | null,
+  excludedPhones: string[] = [],
 ): WappiContactGetParams {
   if (messengerType === 'MAX') {
     const bareId = chatId.replace('@c.us', '').replace('@s.whatsapp.net', '').trim();
     const normalizedHint =
-      hintPhone && looksLikePhoneNumber(hintPhone) ? normalizePhone(hintPhone) : null;
+      hintPhone &&
+      looksLikePhoneNumber(hintPhone) &&
+      !isExcludedPhone(hintPhone, excludedPhones)
+        ? normalizePhone(hintPhone)
+        : null;
 
-    if (bareId && looksLikePhoneNumber(bareId)) {
+    if (bareId && looksLikePhoneNumber(bareId) && !isExcludedPhone(bareId, excludedPhones)) {
       return { phone: normalizePhone(bareId) };
     }
     if (normalizedHint) {
@@ -56,6 +61,27 @@ export function buildContactGetParams(
   }
 
   return { recipient: wappiContactRecipient(chatId, messengerType) };
+}
+
+/** One dialog per peer — Wappi may return both `123` and `123@c.us` for MAX. */
+export function dedupeWappiDialogs(
+  dialogs: Record<string, unknown>[],
+  messengerType: string,
+): Record<string, unknown>[] {
+  const byNorm = new Map<string, Record<string, unknown>>();
+
+  for (const chat of dialogs) {
+    const rawId = String(chat.id ?? '');
+    if (!rawId) continue;
+    const norm = normalizeWappiChatId(rawId, messengerType);
+    const existing = byNorm.get(norm);
+    byNorm.set(
+      norm,
+      existing ? { ...existing, ...chat, id: norm } : { ...chat, id: norm },
+    );
+  }
+
+  return [...byNorm.values()];
 }
 
 function parseMaxContactName(data: Record<string, unknown>): string | null {
@@ -87,7 +113,7 @@ function parseMaxContactName(data: Record<string, unknown>): string | null {
 
 function readContactPhoneField(
   value: unknown,
-  lineProfileId: string,
+  excludedPhones: string[],
 ): string | null {
   const raw =
     typeof value === 'number'
@@ -95,7 +121,7 @@ function readContactPhoneField(
       : typeof value === 'string'
         ? value.trim()
         : '';
-  if (!raw || !looksLikePhoneNumber(raw) || isLinePhone(raw, lineProfileId)) {
+  if (!raw || !looksLikePhoneNumber(raw) || isExcludedPhone(raw, excludedPhones)) {
     return null;
   }
   return normalizePhone(raw);
@@ -103,7 +129,7 @@ function readContactPhoneField(
 
 export function parseWappiContactResponse(
   response: Record<string, unknown> | null | undefined,
-  lineProfileId: string,
+  excludedPhones: string[],
   messengerType: string,
 ): ParsedWappiContact {
   const empty: ParsedWappiContact = {
@@ -127,15 +153,15 @@ export function parseWappiContactResponse(
 
   let contactPhone: string | null = null;
   if (messengerType === 'MAX') {
-    contactPhone = readContactPhoneField(data.phone, lineProfileId);
+    contactPhone = readContactPhoneField(data.phone, excludedPhones);
   } else {
-    contactPhone = readContactPhoneField(data.number, lineProfileId);
+    contactPhone = readContactPhoneField(data.number, excludedPhones);
     if (!contactPhone && messengerType === 'WHATSAPP' && contactId) {
       const fromId = extractPhoneFromChatId(
         contactId.includes('@') ? contactId : `${contactId}@c.us`,
         'WHATSAPP',
       );
-      if (fromId && !isLinePhone(fromId, lineProfileId)) {
+      if (fromId && !isExcludedPhone(fromId, excludedPhones)) {
         contactPhone = fromId;
       }
     }
