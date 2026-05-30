@@ -7,6 +7,7 @@ services:
       LETSENCRYPT_HOST: api.msg.fintech-consult.ru
       LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
       VIRTUAL_PORT: 3000
+      WAPPI_HTTP_LOG: "1"
       WAPPI_LOG_DIR: /var/log/fintech-messenger/wappi
     expose:
       - "3000"
