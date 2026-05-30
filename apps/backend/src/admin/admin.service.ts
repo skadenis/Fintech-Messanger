@@ -32,6 +32,7 @@ import {
   buildMaxContactGetAttempts,
   isGroupOrChannelChat,
   isMaxBotChat,
+  isMaxFavoritesDialog,
   normalizeWappiChatId,
   parseWappiContactResponse,
   resolveMaxContactNameUserIdFromMessages,
@@ -575,7 +576,11 @@ export class AdminService {
         const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
         const filtered = dialogs.filter((chat) => {
           const id = String(chat.id ?? '');
-          return id && !isGroupOrChannelChat(id, chat);
+          return (
+            id &&
+            !isGroupOrChannelChat(id, chat) &&
+            !(line.messengerType === 'MAX' && isMaxFavoritesDialog(id, chat))
+          );
         });
         collected.push(...filtered);
 
@@ -655,7 +660,10 @@ export class AdminService {
       rawChatId,
     );
 
-    if (line.messengerType === 'MAX' && isMaxBotChat(messages, chat)) {
+    if (
+      line.messengerType === 'MAX' &&
+      (isMaxBotChat(messages, chat) || isMaxFavoritesDialog(normalizedChatId, chat))
+    ) {
       if (isWappiHttpLogEnabled()) {
         this.wappiHttpFileLog.logSyncPhone(line, normalizedChatId, {
           reason: 'skipped_max_bot_chat',

@@ -17,6 +17,7 @@ import {
   parseWappiContactResponse,
   buildContactGetParams,
   isMaxBotChat,
+  isMaxFavoritesDialog,
   normalizeWappiChatId,
   parseMaxContactNameUserId,
   resolveMaxPeerUserIdFromMessages,
@@ -134,8 +135,11 @@ export class WappiProcessor extends WorkerHost {
       return;
     }
 
-    if (line.messengerType === 'MAX' && isMaxBotChat([payload])) {
-      this.logger.debug(`Ignoring MAX bot/system chat: ${chatId}`);
+    if (
+      line.messengerType === 'MAX' &&
+      (isMaxBotChat([payload]) || isMaxFavoritesDialog(chatId))
+    ) {
+      this.logger.debug(`Ignoring MAX bot/system/favorites chat: ${chatId}`);
       return;
     }
 

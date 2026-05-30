@@ -8,7 +8,9 @@
     "db:generate": "pnpm --filter @fintech/backend exec prisma generate",
     "db:migrate": "pnpm --filter @fintech/backend exec prisma migrate dev",
     "db:seed": "pnpm --filter @fintech/backend exec prisma db seed",
-    "iframe:url": "pnpm --filter @fintech/backend exec ts-node scripts/generate-iframe-secret.ts"
+    "iframe:url": "pnpm --filter @fintech/backend exec ts-node scripts/generate-iframe-secret.ts",
+    "hooks:install": "sh scripts/install-git-hooks.sh",
+    "wappi:probe": "pnpm --filter @fintech/backend exec ts-node scripts/probe-wappi-line.ts"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

@@ -4,5 +4,6 @@ dist
 .env
 .env.local
 *.log
+logs/wappi/
 .DS_Store
 uploads/

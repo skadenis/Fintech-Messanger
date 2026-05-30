@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+root="$(git rev-parse --show-toplevel)"
+exec "$root/apps/backend/scripts/clean-wappi-logs.sh"

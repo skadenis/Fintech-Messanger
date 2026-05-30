@@ -153,6 +153,27 @@ export function buildContactGetParams(
   return { recipient: wappiContactRecipient(chatId, messengerType) };
 }
 
+function mergeWappiDialogRow(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  normId: string,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing, ...incoming, id: normId };
+  for (const field of ['phone', 'number', 'contact_phone'] as const) {
+    const kept = readContactPhoneField(existing[field], []);
+    const next = readContactPhoneField(incoming[field], []);
+    if (kept && !next) merged[field] = existing[field];
+  }
+  return merged;
+}
+
+/** MAX "Избранное" / saved messages — not a contact dialog. */
+export function isMaxFavoritesDialog(chatId: string, chat?: Record<string, unknown>): boolean {
+  if (chatId === '0') return true;
+  const name = String(chat?.name ?? '').trim();
+  return name === 'Избранное';
+}
+
 /** One dialog per peer — Wappi may return both `123` and `123@c.us` for MAX. */
 export function dedupeWappiDialogs(
   dialogs: Record<string, unknown>[],
@@ -167,7 +188,9 @@ export function dedupeWappiDialogs(
     const existing = byNorm.get(norm);
     byNorm.set(
       norm,
-      existing ? { ...existing, ...chat, id: norm } : { ...chat, id: norm },
+      existing
+        ? mergeWappiDialogRow(existing, chat, norm)
+        : { ...chat, id: norm },
     );
   }
 
