@@ -9,7 +9,12 @@ import {
   MessageSource,
   MessageStatus,
 } from '@fintech/shared';
-import { messengerTypeFromString, normalizePhone, formatChatId } from '../common/utils';
+import {
+  formatChatId,
+  messengerTypeFromString,
+  normalizePhone,
+  phonesMatch,
+} from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from '../wappi/wappi.service';
@@ -26,13 +31,73 @@ export class BitrixService {
     return formatChatId(messengerType, phone);
   }
 
-  async getContactDetails(contactId: string): Promise<{ name: string | null; phone: string | null } | null> {
+  private getWebhookBaseUrl(): string | null {
     const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
     if (!webhookUrl) return null;
+    return webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
+  }
+
+  /**
+   * В Битрикс телефоны хранятся только цифрами без «+»:
+   * +7 (905) 518-58-34 → 79055185834
+   */
+  private phoneSearchVariants(phone: string): string[] {
+    const digits = normalizePhone(phone);
+    if (!digits) return [];
+
+    const variants = [digits];
+
+    // Запасной вариант: иногда встречается 8XXXXXXXXXX вместо 7XXXXXXXXXX
+    if (digits.startsWith('7') && digits.length === 11) {
+      variants.push(`8${digits.slice(1)}`);
+    }
+
+    return variants;
+  }
+
+  private extractPhonesFromContact(contact: Record<string, unknown>): string[] {
+    const phoneField = contact.PHONE;
+    if (!Array.isArray(phoneField)) return [];
+
+    return phoneField
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const value = (entry as { VALUE?: unknown }).VALUE;
+        return typeof value === 'string' ? normalizePhone(value) : null;
+      })
+      .filter((value): value is string => Boolean(value));
+  }
+
+  private async listContactsByPhone(
+    baseUrl: string,
+    phoneFilter: string,
+  ): Promise<Record<string, unknown>[]> {
+    const url = `${baseUrl}/crm.contact.list.json`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        filter: { PHONE: phoneFilter },
+        select: ['ID', 'PHONE'],
+      }),
+    });
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as { result?: unknown };
+    return Array.isArray(data?.result)
+      ? (data.result as Record<string, unknown>[])
+      : [];
+  }
+
+  async getContactDetails(contactId: string): Promise<{ name: string | null; phone: string | null } | null> {
+    const baseUrl = this.getWebhookBaseUrl();
+    if (!baseUrl) return null;
 
     try {
-      // Убираем слэш на конце, если он есть, чтобы корректно собрать URL
-      const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
       const url = `${baseUrl}/crm.contact.get.json?id=${encodeURIComponent(contactId)}`;
 
       const response = await fetch(url);
@@ -63,35 +128,41 @@ export class BitrixService {
   }
 
   async findContactByPhone(phone: string): Promise<string | null> {
-    const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
-    if (!webhookUrl) return null;
+    const baseUrl = this.getWebhookBaseUrl();
+    if (!baseUrl) return null;
+
+    const targetPhone = normalizePhone(phone);
+    if (!targetPhone) return null;
 
     try {
-      const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
-      const url = `${baseUrl}/crm.duplicate.findbycomm.json?entity_type=CONTACT&type=PHONE&values[]=${encodeURIComponent(phone)}`;
+      for (const variant of this.phoneSearchVariants(targetPhone)) {
+        const contacts = await this.listContactsByPhone(baseUrl, variant);
+        for (const contact of contacts) {
+          const contactPhones = this.extractPhonesFromContact(contact);
+          const matches = contactPhones.some((stored) =>
+            phonesMatch(stored, targetPhone),
+          );
+          if (!matches) continue;
 
-      const response = await fetch(url);
-      if (!response.ok) return null;
-
-      const data = await response.json() as any;
-      const result = data?.result;
-      if (!result || !Array.isArray(result.CONTACT) || result.CONTACT.length === 0) {
-        return null;
+          const id = contact.ID;
+          if (id !== undefined && id !== null) {
+            return String(id);
+          }
+        }
       }
 
-      return String(result.CONTACT[0]);
+      return null;
     } catch (error) {
-      console.error('Failed to find contact by phone in Bitrix:', error);
+      console.error('Failed to find contact by phone via crm.contact.list:', error);
       return null;
     }
   }
 
   async getAllUsers(): Promise<any[]> {
-    const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
-    if (!webhookUrl) throw new Error('BITRIX_WEBHOOK_URL is not configured');
+    const baseUrl = this.getWebhookBaseUrl();
+    if (!baseUrl) throw new Error('BITRIX_WEBHOOK_URL is not configured');
 
     try {
-      const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
       let allUsers: any[] = [];
       let start = 0;
       let hasMore = true;
@@ -120,11 +191,10 @@ export class BitrixService {
   }
 
   async getUserDetails(userId: string): Promise<{ name: string; position: string | null; departmentId: string | null; departmentName: string | null; avatarUrl: string | null } | null> {
-    const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
-    if (!webhookUrl) return null;
+    const baseUrl = this.getWebhookBaseUrl();
+    if (!baseUrl) return null;
 
     try {
-      const baseUrl = webhookUrl.endsWith('/') ? webhookUrl.slice(0, -1) : webhookUrl;
       const url = `${baseUrl}/user.get.json?ID=${encodeURIComponent(userId)}`;
 
       const response = await fetch(url);
