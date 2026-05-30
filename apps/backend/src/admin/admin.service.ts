@@ -38,6 +38,8 @@ import {
   wappiMessageChatIdCandidates,
 } from '../common/wappi-contact.utils';
 import { WappiLine } from '@prisma/client';
+import { isWappiHttpLogEnabled } from '../wappi/wappi-http-log.utils';
+import { WappiHttpFileLoggerService } from '../wappi/wappi-http-file-logger.service';
 
 @Injectable()
 export class AdminService {
@@ -45,6 +47,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly bitrixService: BitrixService,
     private readonly wappiService: WappiService,
+    private readonly wappiHttpFileLog: WappiHttpFileLoggerService,
   ) {}
 
   private assertAdmin(user: JwtPayload) {
@@ -558,12 +561,12 @@ export class AdminService {
       let offset = 0;
 
       for (;;) {
-        const chatsResponse = await this.wappiService.getChats(
+        const chatsResponse = (await this.wappiService.getChats(
           line,
           AdminService.SYNC_CHATS_PAGE_SIZE,
           offset,
           true,
-        );
+        )) as { dialogs?: Record<string, unknown>[] };
         const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
         const filtered = dialogs.filter((chat) => {
           const id = String(chat.id ?? '');
@@ -590,12 +593,12 @@ export class AdminService {
     let offset = 0;
 
     for (let page = 0; page < AdminService.SYNC_MESSAGES_MAX_PAGES; page++) {
-      const response = await this.wappiService.getMessages(
+      const response = (await this.wappiService.getMessages(
         line,
         chatId,
         AdminService.SYNC_MESSAGES_PAGE_SIZE,
         offset,
-      );
+      )) as { messages?: Record<string, unknown>[] };
       const batch: Record<string, unknown>[] = response?.messages || [];
       if (batch.length === 0) break;
 
@@ -675,10 +678,32 @@ export class AdminService {
       }
     }
 
+    const fromMessages = resolveContactPhoneFromMessages(
+      messages,
+      linePhones,
+      line.messengerType,
+    );
+    const fromChatMeta = readPhoneFromChatMetadata(chat, linePhones);
+
     let contactPhone =
-      parsed.contactPhone ??
-      resolveContactPhoneFromMessages(messages, linePhones, line.messengerType) ??
-      readPhoneFromChatMetadata(chat, linePhones);
+      parsed.contactPhone ?? fromMessages ?? fromChatMeta;
+
+    if (isWappiHttpLogEnabled() && !contactPhone) {
+      this.wappiHttpFileLog.logSyncPhone(line, normalizedChatId, {
+        reason: 'no_phone_resolved',
+        contactParams,
+        parsedContact: { phone: parsed.contactPhone, name: parsed.contactName },
+        linePhones,
+        messageCount: messages.length,
+        fromMessages,
+        fromChatMeta,
+        chatMeta: {
+          phone: chat.phone,
+          number: chat.number,
+          contact_phone: chat.contact_phone,
+        },
+      });
+    }
 
     const updateData: Record<string, unknown> = {};
     if (contactName) updateData.contactName = contactName;
@@ -801,4 +826,5 @@ export class AdminService {
 
     return { chats: 1, messages: syncedMessages };
   }
+
 }

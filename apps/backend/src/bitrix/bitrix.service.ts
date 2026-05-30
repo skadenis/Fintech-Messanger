@@ -303,7 +303,7 @@ export class BitrixService {
       data: {
         status: MessageStatus.DELIVERED,
         wappiMessageId: wappiResult.messageId,
-        rawPayload: wappiResult.raw,
+        rawPayload: wappiResult.raw as object,
       },
     });
 

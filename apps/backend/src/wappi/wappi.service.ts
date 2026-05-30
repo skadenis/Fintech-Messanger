@@ -1,20 +1,26 @@
 import { Injectable } from '@nestjs/common';
 import { WappiLine } from '@prisma/client';
 import { wappiBaseUrl } from '../common/utils';
+import { isWappiHttpLogEnabled } from './wappi-http-log.utils';
+import { WappiHttpFileLoggerService } from './wappi-http-file-logger.service';
 
 type SendPayload = Record<string, string>;
 
 @Injectable()
 export class WappiService {
-  private async get(
+  constructor(private readonly httpFileLog: WappiHttpFileLoggerService) {}
+
+  private async requestJson(
     line: WappiLine,
+    method: 'GET' | 'POST',
     path: string,
     params: Record<string, string | number | boolean> = {},
-  ) {
+    body?: SendPayload,
+  ): Promise<unknown> {
     const baseUrl = wappiBaseUrl(line.messengerType);
     const searchParams = new URLSearchParams();
     searchParams.append('profile_id', line.wappiProfileId);
-    
+
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== null) {
         searchParams.append(key, String(value));
@@ -22,21 +28,64 @@ export class WappiService {
     }
 
     const url = `${baseUrl}${path}?${searchParams.toString()}`;
+    const started = Date.now();
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: line.wappiApiToken,
-      },
-    });
-
-    const raw = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(`Wappi get failed: ${response.status} ${JSON.stringify(raw)}`);
+    if (isWappiHttpLogEnabled()) {
+      this.httpFileLog.logRequest(line, method, path, params, body);
     }
 
-    return raw;
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Authorization: line.wappiApiToken,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+
+      const raw = await response.json().catch(() => ({}));
+      const elapsedMs = Date.now() - started;
+
+      if (!response.ok) {
+        const errText = `${response.status} ${JSON.stringify(raw)}`;
+        if (isWappiHttpLogEnabled()) {
+          this.httpFileLog.logResponse(
+            line,
+            method,
+            path,
+            response.status,
+            elapsedMs,
+            raw,
+            errText,
+          );
+        }
+        throw new Error(`Wappi ${method} failed: ${errText}`);
+      }
+
+      if (isWappiHttpLogEnabled()) {
+        this.httpFileLog.logResponse(line, method, path, response.status, elapsedMs, raw);
+      }
+      return raw;
+    } catch (err) {
+      const elapsedMs = Date.now() - started;
+      if (
+        isWappiHttpLogEnabled() &&
+        err instanceof Error &&
+        !err.message.startsWith('Wappi ')
+      ) {
+        this.httpFileLog.logResponse(line, method, path, 0, elapsedMs, null, err.message);
+      }
+      throw err;
+    }
+  }
+
+  private async get(
+    line: WappiLine,
+    path: string,
+    params: Record<string, string | number | boolean> = {},
+  ) {
+    return this.requestJson(line, 'GET', path, params);
   }
 
   private async postWithQuery(
@@ -44,32 +93,7 @@ export class WappiService {
     path: string,
     params: Record<string, string | number | boolean> = {},
   ) {
-    const baseUrl = wappiBaseUrl(line.messengerType);
-    const searchParams = new URLSearchParams();
-    searchParams.append('profile_id', line.wappiProfileId);
-    
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value));
-      }
-    }
-
-    const url = `${baseUrl}${path}?${searchParams.toString()}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: line.wappiApiToken,
-      },
-    });
-
-    const raw = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(`Wappi post failed: ${response.status} ${JSON.stringify(raw)}`);
-    }
-
-    return raw;
+    return this.requestJson(line, 'POST', path, params);
   }
 
   private async post(
@@ -77,23 +101,13 @@ export class WappiService {
     path: string,
     payload: SendPayload,
   ) {
-    const baseUrl = wappiBaseUrl(line.messengerType);
-    const url = `${baseUrl}${path}?profile_id=${encodeURIComponent(line.wappiProfileId)}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: line.wappiApiToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const raw = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(`Wappi send failed: ${response.status} ${JSON.stringify(raw)}`);
-    }
+    const raw = (await this.requestJson(
+      line,
+      'POST',
+      path,
+      {},
+      payload,
+    )) as Record<string, unknown>;
 
     return {
       messageId: raw?.message_id ?? raw?.id ?? null,
