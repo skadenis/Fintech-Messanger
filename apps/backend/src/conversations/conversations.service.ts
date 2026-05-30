@@ -43,7 +43,7 @@ export class ConversationsService {
       contactName: conversation.contactName,
       contactPhone: sanitizeStoredContactPhone(
         conversation.contactPhone,
-        conversation.line.name,
+        conversation.line.wappiProfileId,
         conversation.wappiChatId,
         conversation.line.messengerType,
       ),

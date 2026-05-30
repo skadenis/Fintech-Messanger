@@ -171,6 +171,19 @@ export class WappiService {
     });
   }
 
+  async getContact(
+    line: WappiLine,
+    params: { recipient?: string; phone?: string },
+  ) {
+    const query: Record<string, string> = {};
+    if (params.recipient) query.recipient = params.recipient;
+    if (params.phone) query.phone = params.phone;
+    if (!query.recipient && !query.phone) {
+      throw new Error('Wappi getContact requires recipient or phone');
+    }
+    return this.get(line, '/sync/contact/get', query);
+  }
+
   async getMessages(line: WappiLine, chatId: string, limit = 100, offset = 0) {
     if (line.messengerType === 'TELEGRAM') {
       return this.get(line, '/sync/messages/get', {

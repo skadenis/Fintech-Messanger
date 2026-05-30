@@ -150,6 +150,18 @@ export function syncLineHistory(token: string, id: string) {
   }, token);
 }
 
+export function syncAllLinesHistory(token: string) {
+  return request<{
+    success: boolean;
+    lines: number;
+    dialogs: number;
+    syncedChats: number;
+    syncedMessages: number;
+  }>('/api/admin/sync-history', {
+    method: 'POST',
+  }, token);
+}
+
 export function syncBitrixUsers(token: string) {
   return request<{ success: boolean; count: number }>('/api/admin/bitrix/sync-users', {
     method: 'POST',

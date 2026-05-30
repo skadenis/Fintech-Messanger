@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MessengerType, Role } from '@fintech/shared';
-import { getLines, getGroups, createLine, updateLine, deleteLine, syncLineHistory } from '../api';
+import { getLines, getGroups, createLine, updateLine, deleteLine, syncLineHistory, syncAllLinesHistory } from '../api';
 import { MessageCircle, Edit2, Trash2, Search, RefreshCw } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 
@@ -16,6 +16,7 @@ export function LinesPage() {
   const [isLineModalOpen, setIsLineModalOpen] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [syncingLineId, setSyncingLineId] = useState<string | null>(null);
+  const [syncingAll, setSyncingAll] = useState(false);
 
   const [lineForm, setLineForm] = useState({
     name: '',
@@ -93,6 +94,28 @@ export function LinesPage() {
     }
   };
 
+  const handleSyncAllHistory = async () => {
+    if (
+      !confirm(
+        'Синхронизировать все линии? Будут загружены чаты, сообщения, контакты и связи с Битрикс24. Это может занять длительное время.',
+      )
+    ) {
+      return;
+    }
+    setSyncingAll(true);
+    try {
+      const result = await syncAllLinesHistory(auth.token);
+      alert(
+        `Синхронизация завершена!\nЛиний: ${result.lines}\nЧатов обработано: ${result.dialogs}\nДиалогов сохранено: ${result.syncedChats}\nСообщений: ${result.syncedMessages}`,
+      );
+      triggerRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error syncing all lines');
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
   const handleSyncHistory = async (line: any) => {
     if (confirm(`Синхронизировать историю для линии ${line.name}? Это может занять некоторое время.`)) {
       setSyncingLineId(line.id);
@@ -122,10 +145,22 @@ export function LinesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Линии Wappi</h1>
-        <button onClick={openCreateModal} className={btnClass}>
-          <MessageCircle size={16} />
-          Создать
-        </button>
+        <div className="flex items-center gap-3">
+          {auth.user.role === Role.SUPER_ADMIN && (
+            <button
+              onClick={handleSyncAllHistory}
+              disabled={syncingAll || syncingLineId !== null}
+              className="rounded-xl bg-[var(--tg-surface)] hover:bg-[var(--tg-input)] border border-[var(--tg-border)] px-4 py-2.5 text-[14px] text-[var(--tg-text)] font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={syncingAll ? 'animate-spin' : ''} />
+              {syncingAll ? 'Синхронизация...' : 'Синхронизировать все'}
+            </button>
+          )}
+          <button onClick={openCreateModal} className={btnClass}>
+            <MessageCircle size={16} />
+            Создать
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">

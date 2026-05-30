@@ -21,10 +21,15 @@ import { BitrixService } from '../bitrix/bitrix.service';
 import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
 import { normalizeMessageType } from '../common/media.utils';
+import { runPool } from '../common/async-pool';
+import { sanitizeStoredContactPhone } from '../common/contact-phone.utils';
 import {
-  resolveContactPhone,
-  sanitizeStoredContactPhone,
-} from '../common/contact-phone.utils';
+  isGroupOrChannelChat,
+  normalizeWappiChatId,
+  parseWappiContactResponse,
+  buildContactGetParams,
+} from '../common/wappi-contact.utils';
+import { WappiLine } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
@@ -435,7 +440,7 @@ export class AdminService {
       contactName: row.contactName,
       contactPhone: sanitizeStoredContactPhone(
         row.contactPhone,
-        row.line.name,
+        row.line.wappiProfileId,
         row.wappiChatId,
         row.line.messengerType,
       ),
@@ -443,6 +448,52 @@ export class AdminService {
       lastMessageAt: row.lastMessageAt.toISOString(),
       messagesCount: row._count.messages,
     }));
+  }
+
+  private static readonly SYNC_DIALOG_CONCURRENCY = 8;
+  private static readonly SYNC_MESSAGES_PAGE_SIZE = 100;
+  private static readonly SYNC_MESSAGES_MAX_PAGES = 50;
+
+  private lineScopeWhere(user: JwtPayload) {
+    if (user.role === Role.SUPER_ADMIN) return {};
+    if (user.groupId) return { groupId: user.groupId };
+    return { id: '__none__' };
+  }
+
+  async syncAllLinesHistory(user: JwtPayload) {
+    if (user.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Only super admin can sync history');
+    }
+
+    const lines = await this.prisma.wappiLine.findMany({
+      where: this.lineScopeWhere(user),
+    });
+
+    const tasks: Array<{ line: WappiLine; chat: Record<string, unknown> }> = [];
+
+    for (const line of lines) {
+      const dialogs = await this.fetchLineDialogs(line);
+      for (const chat of dialogs) {
+        tasks.push({ line, chat });
+      }
+    }
+
+    const results = await runPool(
+      tasks,
+      AdminService.SYNC_DIALOG_CONCURRENCY,
+      (task) => this.syncDialogFromWappi(task.line, task.chat),
+    );
+
+    const syncedChats = results.reduce((sum, r) => sum + r.chats, 0);
+    const syncedMessages = results.reduce((sum, r) => sum + r.messages, 0);
+
+    return {
+      success: true,
+      lines: lines.length,
+      dialogs: tasks.length,
+      syncedChats,
+      syncedMessages,
+    };
   }
 
   async syncLineHistory(user: JwtPayload, lineId: string) {
@@ -455,192 +506,216 @@ export class AdminService {
       throw new NotFoundException('Line not found');
     }
 
-    // 1. Fetch chats
-    const chatsResponse = await this.wappiService.getChats(line, 200, 0, true);
-    const dialogs = chatsResponse?.dialogs || [];
+    const dialogs = await this.fetchLineDialogs(line);
+    const tasks = dialogs.map((chat) => ({ line, chat }));
 
-    let syncedChats = 0;
-    let syncedMessages = 0;
+    const results = await runPool(
+      tasks,
+      AdminService.SYNC_DIALOG_CONCURRENCY,
+      (task) => this.syncDialogFromWappi(task.line, task.chat),
+    );
 
-    for (const chat of dialogs) {
-      const wappiChatId = chat.id;
+    const syncedChats = results.reduce((sum, r) => sum + r.chats, 0);
+    const syncedMessages = results.reduce((sum, r) => sum + r.messages, 0);
 
-      // Игнорируем каналы и группы
-      if (
-        wappiChatId.startsWith('-') || 
-        wappiChatId.includes('@g.us') || 
-        wappiChatId.includes('@broadcast') || 
-        chat.isGroup ||
-        chat.type === 'channel' ||
-        chat.type === 'group' ||
-        chat.type === 'supergroup'
-      ) {
-        continue;
-      }
+    return { success: true, syncedChats, syncedMessages };
+  }
 
-      let normalizedChatId = wappiChatId;
-      if (!normalizedChatId.includes('@')) {
-        normalizedChatId = `${normalizedChatId}@c.us`;
-      }
-
-      let contactName = chat.name || chat.pushname || null;
-      let updateNameObj: any = {};
-      
-      if (contactName) {
-        if (contactName.startsWith('Contact ')) {
-          updateNameObj = { contactName: null };
-        } else {
-          updateNameObj = { contactName };
-        }
-      }
-
-      const chatPhone = sanitizeStoredContactPhone(
-        chat.phone || chat.contact_phone || chat.number || null,
-        line.name,
-        normalizedChatId,
-        line.messengerType,
-      );
-
-      let updateObj: Record<string, unknown> = { ...updateNameObj };
-      if (chatPhone) {
-        updateObj.contactPhone = chatPhone;
-        const bitrixContactId = await this.bitrixService.findContactByPhone(chatPhone);
-        if (bitrixContactId) {
-          updateObj.bitrixContactId = bitrixContactId;
-        }
-      }
-
-      // 1. Fetch messages for this chat first to skip empty ones
-      let messages: any[] = [];
-      try {
-        const messagesResponse = await this.wappiService.getMessages(line, wappiChatId, 100, 0);
-        messages = messagesResponse?.messages || [];
-      } catch (err) {
-        console.error(`Failed to fetch messages for chat ${normalizedChatId}: ${err}`);
-      }
-
-      if (messages.length === 0) {
-        continue; // Skip empty chats
-      }
-
-      const conversation = await this.prisma.conversation.upsert({
-        where: {
-          lineId_wappiChatId: {
-            lineId: line.id,
-            wappiChatId: normalizedChatId,
-          },
-        },
-        update: {
-          ...updateObj,
-        },
-        create: {
-          lineId: line.id,
-          wappiChatId: normalizedChatId,
-          contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-          contactPhone: chatPhone,
-        },
+  private async fetchLineDialogs(line: WappiLine): Promise<Record<string, unknown>[]> {
+    try {
+      const chatsResponse = await this.wappiService.getChats(line, 200, 0, true);
+      const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
+      return dialogs.filter((chat) => {
+        const id = String(chat.id ?? '');
+        return id && !isGroupOrChannelChat(id, chat);
       });
+    } catch (err) {
+      console.error(`Failed to fetch chats for line ${line.id} (${line.name}):`, err);
+      return [];
+    }
+  }
 
-      syncedChats++;
+  private async fetchAllChatMessages(
+    line: WappiLine,
+    chatId: string,
+  ): Promise<Record<string, unknown>[]> {
+    const all: Record<string, unknown>[] = [];
+    let offset = 0;
 
-      // 2. Process messages
-      try {
-        let foundPhoneInMessages: string | null = null;
+    for (let page = 0; page < AdminService.SYNC_MESSAGES_MAX_PAGES; page++) {
+      const response = await this.wappiService.getMessages(
+        line,
+        chatId,
+        AdminService.SYNC_MESSAGES_PAGE_SIZE,
+        offset,
+      );
+      const batch: Record<string, unknown>[] = response?.messages || [];
+      if (batch.length === 0) break;
 
-        for (const msg of messages) {
-          if (!foundPhoneInMessages) {
-            const direction = msg.fromMe
-              ? MessageDirection.OUTGOING
-              : MessageDirection.INCOMING;
-            foundPhoneInMessages = resolveContactPhone({
-              linePhone: line.name,
-              chatId: normalizedChatId,
-              direction,
-              payload: msg as Record<string, unknown>,
-              messengerType: line.messengerType,
-            });
-          }
+      all.push(...batch);
+      if (batch.length < AdminService.SYNC_MESSAGES_PAGE_SIZE) break;
+      offset += AdminService.SYNC_MESSAGES_PAGE_SIZE;
+    }
 
-          const wappiMessageId = msg.id;
-          if (!wappiMessageId) continue;
+    return all;
+  }
 
-          // Проверяем, есть ли уже такое сообщение
-          const existing = await this.prisma.message.findFirst({
-            where: { wappiMessageId },
-          });
+  private async syncDialogFromWappi(
+    line: WappiLine,
+    chat: Record<string, unknown>,
+  ): Promise<{ chats: number; messages: number }> {
+    const rawChatId = String(chat.id);
+    const normalizedChatId = normalizeWappiChatId(rawChatId, line.messengerType);
+    const contactParams = buildContactGetParams(
+      normalizedChatId,
+      line.messengerType,
+      (chat.phone || chat.number || chat.contact_phone) as string | undefined,
+    );
 
-          if (existing) continue;
+    const [messages, contactResponse] = await Promise.all([
+      this.fetchAllChatMessages(line, rawChatId).catch((err) => {
+        console.error(`Failed to fetch messages for chat ${normalizedChatId}: ${err}`);
+        return [] as Record<string, unknown>[];
+      }),
+      contactParams.recipient || contactParams.phone
+        ? this.wappiService.getContact(line, contactParams).catch((err) => {
+            console.error(
+              `Failed to fetch contact ${JSON.stringify(contactParams)}: ${err}`,
+            );
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
 
-          const direction = msg.fromMe ? MessageDirection.OUTGOING : MessageDirection.INCOMING;
-          const messageType = normalizeMessageType(msg.type);
+    if (messages.length === 0) {
+      return { chats: 0, messages: 0 };
+    }
 
-          let status = MessageStatus.DELIVERED;
-          if (msg.isRead || msg.delivery_status === 'read') status = MessageStatus.READ;
-          else if (msg.delivery_status === 'error') status = MessageStatus.ERROR;
+    const parsed = parseWappiContactResponse(
+      contactResponse as Record<string, unknown> | null,
+      line.wappiProfileId,
+      line.messengerType,
+    );
 
-          let body = msg.body;
-          if (typeof body !== 'string' || body.startsWith('/9j/') || body.length >= 5000) {
-            body = null;
-          }
-          
-          if (messageType !== 'text' && body && !msg.caption) {
-            msg.caption = body;
-            body = null;
-          }
-
-          let reaction = null;
-          if (Array.isArray(msg.reactions) && msg.reactions.length > 0) {
-            reaction = msg.reactions[0].reaction;
-          }
-
-          await this.prisma.message.create({
-            data: {
-              conversationId: conversation.id,
-              wappiMessageId,
-              direction,
-              source: MessageSource.WAPPI,
-              body,
-              type: messageType,
-              caption: msg.caption || null,
-              fileName: msg.file_name || null,
-              mimeType: msg.mimetype || null,
-              mediaUrl: msg.thumbnail || msg.picture || msg.file_link || null,
-              status,
-              reaction,
-              rawPayload: msg,
-              createdAt: new Date(msg.time || Date.now()),
-            },
-          });
-
-          syncedMessages++;
-        }
-
-        // Обновляем lastMessageAt у диалога и телефон, если нашли
-        const updateData: any = {};
-        if (messages.length > 0) {
-          const lastMsg = messages[0];
-          let msgTime = lastMsg.time || Date.now();
-          if (typeof msgTime === 'number' && msgTime < 10000000000) {
-            msgTime = msgTime * 1000;
-          }
-          updateData.lastMessageAt = new Date(msgTime);
-        }
-        
-        if (foundPhoneInMessages) {
-          updateData.contactPhone = foundPhoneInMessages;
-        }
-
-        if (Object.keys(updateData).length > 0) {
-          await this.prisma.conversation.update({
-            where: { id: conversation.id },
-            data: updateData,
-          });
-        }
-      } catch (err) {
-        console.error(`Failed to sync messages for chat ${wappiChatId}`, err);
+    let contactName = parsed.contactName;
+    if (!contactName) {
+      const fallback = (chat.name || chat.pushname) as string | undefined;
+      if (fallback && !String(fallback).startsWith('Contact ')) {
+        contactName = String(fallback);
       }
     }
 
-    return { success: true, syncedChats, syncedMessages };
+    const updateData: Record<string, unknown> = {};
+    if (contactName) updateData.contactName = contactName;
+    if (parsed.contactPhone) {
+      updateData.contactPhone = parsed.contactPhone;
+      const bitrixContactId = await this.bitrixService.findContactByPhone(
+        parsed.contactPhone,
+      );
+      if (bitrixContactId) updateData.bitrixContactId = bitrixContactId;
+    }
+
+    const conversation = await this.prisma.conversation.upsert({
+      where: {
+        lineId_wappiChatId: {
+          lineId: line.id,
+          wappiChatId: normalizedChatId,
+        },
+      },
+      update: updateData,
+      create: {
+        lineId: line.id,
+        wappiChatId: normalizedChatId,
+        contactName: contactName ?? null,
+        contactPhone: parsed.contactPhone,
+        bitrixContactId:
+          typeof updateData.bitrixContactId === 'string'
+            ? updateData.bitrixContactId
+            : null,
+      },
+    });
+
+    let syncedMessages = 0;
+    for (const msg of messages) {
+      const wappiMessageId = msg.id;
+      if (!wappiMessageId) continue;
+
+      const existing = await this.prisma.message.findFirst({
+        where: { wappiMessageId: String(wappiMessageId) },
+      });
+      if (existing) continue;
+
+      const direction = msg.fromMe
+        ? MessageDirection.OUTGOING
+        : MessageDirection.INCOMING;
+      const messageType = normalizeMessageType(
+        typeof msg.type === 'string' ? msg.type : 'text',
+      );
+
+      let status = MessageStatus.DELIVERED;
+      if (msg.isRead || msg.delivery_status === 'read') status = MessageStatus.READ;
+      else if (msg.delivery_status === 'error') status = MessageStatus.ERROR;
+
+      let body = msg.body;
+      if (typeof body !== 'string' || body.startsWith('/9j/') || body.length >= 5000) {
+        body = null;
+      }
+
+      let caption = msg.caption;
+      if (messageType !== 'text' && body && !caption) {
+        caption = body;
+        body = null;
+      }
+
+      let reaction = null;
+      if (Array.isArray(msg.reactions) && msg.reactions.length > 0) {
+        reaction = (msg.reactions[0] as { reaction?: string })?.reaction ?? null;
+      }
+
+      let msgTime = msg.time || Date.now();
+      if (typeof msgTime === 'number' && msgTime < 10000000000) {
+        msgTime = msgTime * 1000;
+      }
+
+      await this.prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          wappiMessageId: String(wappiMessageId),
+          direction,
+          source: MessageSource.WAPPI,
+          body: typeof body === 'string' ? body : null,
+          type: messageType,
+          caption: typeof caption === 'string' ? caption : null,
+          fileName: typeof msg.file_name === 'string' ? msg.file_name : null,
+          mimeType: typeof msg.mimetype === 'string' ? msg.mimetype : null,
+          mediaUrl:
+            (typeof msg.thumbnail === 'string' ? msg.thumbnail : null) ||
+            (typeof msg.picture === 'string' ? msg.picture : null) ||
+            (typeof msg.file_link === 'string' ? msg.file_link : null),
+          status,
+          reaction,
+          rawPayload: msg as object,
+          createdAt: new Date(msgTime as string | number),
+        },
+      });
+
+      syncedMessages++;
+    }
+
+    const lastMsg = messages[0];
+    let lastMsgTime = lastMsg?.time || Date.now();
+    if (typeof lastMsgTime === 'number' && lastMsgTime < 10000000000) {
+      lastMsgTime = lastMsgTime * 1000;
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        lastMessageAt: new Date(lastMsgTime as string | number),
+        ...updateData,
+      },
+    });
+
+    return { chats: 1, messages: syncedMessages };
   }
 }

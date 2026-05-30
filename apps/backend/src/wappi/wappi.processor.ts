@@ -6,7 +6,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from './wappi.service';
 import { mapMessageDto, normalizeMessageType } from '../common/media.utils';
-import { resolveContactPhone } from '../common/contact-phone.utils';
+import { isLinePhone } from '../common/contact-phone.utils';
+import {
+  parseWappiContactResponse,
+  buildContactGetParams,
+} from '../common/wappi-contact.utils';
 
 import { BitrixService } from '../bitrix/bitrix.service';
 
@@ -141,23 +145,51 @@ export class WappiProcessor extends WorkerHost {
     const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
     if (!line) return;
 
-    const resolvedPhone = resolveContactPhone({
-      linePhone: line.name,
-      chatId,
-      direction,
-      payload,
-      messengerType: line.messengerType,
+    const existingConversation = await this.prisma.conversation.findUnique({
+      where: { lineId_wappiChatId: { lineId, wappiChatId: chatId } },
+      select: { contactPhone: true, contactName: true, bitrixContactId: true },
     });
 
     let updateObj: Record<string, unknown> = { ...updateNameObj };
-    let bitrixContactId: string | null = null;
-    if (resolvedPhone) {
-      updateObj.contactPhone = resolvedPhone;
-      // Try to link with Bitrix contact if not already linked (we don't have the current conversation state here easily, so we just upsert it)
-      // To avoid too many API calls, we could fetch the conversation first, but upsert is fine.
-      bitrixContactId = await this.bitrixService.findContactByPhone(resolvedPhone);
-      if (bitrixContactId) {
-        updateObj.bitrixContactId = bitrixContactId;
+    let contactPhone: string | null = existingConversation?.contactPhone ?? null;
+    let bitrixContactId: string | null = existingConversation?.bitrixContactId ?? null;
+
+    const needsContactFetch =
+      !existingConversation?.contactName ||
+      !contactPhone ||
+      isLinePhone(contactPhone, line.wappiProfileId);
+
+    if (needsContactFetch) {
+      try {
+        const contactParams = buildContactGetParams(chatId, line.messengerType);
+        if (!contactParams.recipient && !contactParams.phone) {
+          throw new Error('No recipient or phone for getContact');
+        }
+        const contactResponse = await this.wappiService.getContact(
+          line,
+          contactParams,
+        );
+        const parsed = parseWappiContactResponse(
+          contactResponse as Record<string, unknown>,
+          line.wappiProfileId,
+          line.messengerType,
+        );
+
+        if (parsed.contactName) {
+          updateObj.contactName = parsed.contactName;
+        }
+        if (parsed.contactPhone) {
+          contactPhone = parsed.contactPhone;
+          updateObj.contactPhone = contactPhone;
+          if (!bitrixContactId) {
+            bitrixContactId = await this.bitrixService.findContactByPhone(contactPhone);
+            if (bitrixContactId) {
+              updateObj.bitrixContactId = bitrixContactId;
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.debug(`getContact failed for ${chatId}: ${err}`);
       }
     }
 
@@ -181,7 +213,7 @@ export class WappiProcessor extends WorkerHost {
         lineId,
         wappiChatId: chatId,
         contactName: updateNameObj.contactName !== undefined ? updateNameObj.contactName : null,
-        contactPhone: resolvedPhone,
+        contactPhone: contactPhone,
         bitrixContactId,
         lastMessageAt: new Date(msgTime),
       },
