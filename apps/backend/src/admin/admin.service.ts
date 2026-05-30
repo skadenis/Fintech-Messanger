@@ -20,7 +20,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BitrixService } from '../bitrix/bitrix.service';
 import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
-import { normalizeMessageType } from '../common/media.utils';
+import {
+  normalizeMessageType,
+  parseMediaFromPayload,
+} from '../common/media.utils';
 import { runPool } from '../common/async-pool';
 import {
   detectLinePhonesFromMessages,
@@ -40,6 +43,7 @@ import {
   resolveMaxPeerUserIdFromMessages,
   dedupeWappiDialogs,
   readChatLastMessageTime,
+  readContactAvatarFromChat,
   readPhoneFromChatMetadata,
   wappiMessageChatIdCandidates,
 } from '../common/wappi-contact.utils';
@@ -428,26 +432,25 @@ export class AdminService {
     return { success: true, count: syncedCount };
   }
 
-  async listConversations(user: JwtPayload) {
-    this.assertAdmin(user);
-
-    const lineScope =
-      user.role === Role.SUPER_ADMIN
-        ? {}
-        : user.groupId
-          ? { groupId: user.groupId }
-          : { groupId: '__none__' };
-
-    const rows = await this.prisma.conversation.findMany({
-      where: { line: lineScope },
-      include: {
-        line: true,
-        _count: { select: { messages: true } },
-      },
-      orderBy: { lastMessageAt: 'desc' },
-    });
-
-    return rows.map((row) => ({
+  private mapAdminConversation(
+    row: {
+      id: string;
+      lineId: string;
+      wappiChatId: string;
+      contactName: string | null;
+      contactPhone: string | null;
+      contactAvatarUrl: string | null;
+      bitrixContactId: string | null;
+      lastMessageAt: Date;
+      line: {
+        name: string;
+        wappiProfileId: string;
+        messengerType: string;
+      };
+      _count: { messages: number };
+    },
+  ) {
+    return {
       id: row.id,
       lineId: row.lineId,
       lineName: row.line.name,
@@ -461,10 +464,94 @@ export class AdminService {
         row.wappiChatId,
         row.line.messengerType,
       ),
+      contactAvatarUrl: row.contactAvatarUrl,
       bitrixContactId: row.bitrixContactId,
       lastMessageAt: row.lastMessageAt.toISOString(),
       messagesCount: row._count.messages,
-    }));
+    };
+  }
+
+  async listConversations(
+    user: JwtPayload,
+    options: { limit?: number; cursor?: string; search?: string } = {},
+  ) {
+    this.assertAdmin(user);
+
+    const lineScope =
+      user.role === Role.SUPER_ADMIN
+        ? {}
+        : user.groupId
+          ? { groupId: user.groupId }
+          : { groupId: '__none__' };
+
+    const limit = Math.min(Math.max(options.limit ?? 40, 1), 100);
+    const search = options.search?.trim();
+
+    const where = {
+      line: lineScope,
+      ...(search
+        ? {
+            OR: [
+              { contactName: { contains: search, mode: 'insensitive' as const } },
+              { contactPhone: { contains: search } },
+              { wappiChatId: { contains: search } },
+              { line: { name: { contains: search, mode: 'insensitive' as const } } },
+              { line: { wappiProfileId: { contains: search } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, rows] = await Promise.all([
+      this.prisma.conversation.count({ where }),
+      this.prisma.conversation.findMany({
+        where,
+        include: {
+          line: true,
+          _count: { select: { messages: true } },
+        },
+        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+        ...(options.cursor
+          ? { cursor: { id: options.cursor }, skip: 1 }
+          : {}),
+      }),
+    ]);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    return {
+      items: page.map((row) => this.mapAdminConversation(row)),
+      hasMore,
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+      total,
+    };
+  }
+
+  async getConversation(user: JwtPayload, conversationId: string) {
+    this.assertAdmin(user);
+
+    const lineScope =
+      user.role === Role.SUPER_ADMIN
+        ? {}
+        : user.groupId
+          ? { groupId: user.groupId }
+          : { groupId: '__none__' };
+
+    const row = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, line: lineScope },
+      include: {
+        line: true,
+        _count: { select: { messages: true } },
+      },
+    });
+
+    if (!row) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    return this.mapAdminConversation(row);
   }
 
   private static readonly SYNC_DIALOG_CONCURRENCY = 8;
@@ -770,6 +857,9 @@ export class AdminService {
     const chatLastAt = readChatLastMessageTime(chat);
     if (chatLastAt) updateData.lastMessageAt = chatLastAt;
 
+    const contactAvatarUrl = readContactAvatarFromChat(chat);
+    if (contactAvatarUrl) updateData.contactAvatarUrl = contactAvatarUrl;
+
     const conversation = await this.prisma.conversation.upsert({
       where: {
         lineId_wappiChatId: {
@@ -783,6 +873,7 @@ export class AdminService {
         wappiChatId: normalizedChatId,
         contactName: contactName ?? null,
         contactPhone,
+        contactAvatarUrl: contactAvatarUrl ?? null,
         bitrixContactId:
           typeof updateData.bitrixContactId === 'string'
             ? updateData.bitrixContactId
@@ -808,23 +899,22 @@ export class AdminService {
       const direction = msg.fromMe
         ? MessageDirection.OUTGOING
         : MessageDirection.INCOMING;
-      const messageType = normalizeMessageType(
-        typeof msg.type === 'string' ? msg.type : 'text',
-      );
+      const parsedMedia = parseMediaFromPayload(msg);
+      const messageType = parsedMedia.type;
 
       let status = MessageStatus.DELIVERED;
       if (msg.isRead || msg.delivery_status === 'read') status = MessageStatus.READ;
       else if (msg.delivery_status === 'error') status = MessageStatus.ERROR;
 
-      let body = msg.body;
-      if (typeof body !== 'string' || body.startsWith('/9j/') || body.length >= 5000) {
-        body = null;
-      }
-
-      let caption = msg.caption;
-      if (messageType !== 'text' && body && !caption) {
-        caption = body;
-        body = null;
+      let body = parsedMedia.body;
+      let caption = parsedMedia.caption;
+      if (
+        !body &&
+        typeof msg.body === 'string' &&
+        !msg.body.startsWith('/9j/') &&
+        msg.body.length < 5000
+      ) {
+        body = msg.body;
       }
 
       let reaction = null;
@@ -843,15 +933,12 @@ export class AdminService {
           wappiMessageId: String(wappiMessageId),
           direction,
           source: MessageSource.WAPPI,
-          body: typeof body === 'string' ? body : null,
+          body,
           type: messageType,
-          caption: typeof caption === 'string' ? caption : null,
-          fileName: typeof msg.file_name === 'string' ? msg.file_name : null,
-          mimeType: typeof msg.mimetype === 'string' ? msg.mimetype : null,
-          mediaUrl:
-            (typeof msg.thumbnail === 'string' ? msg.thumbnail : null) ||
-            (typeof msg.picture === 'string' ? msg.picture : null) ||
-            (typeof msg.file_link === 'string' ? msg.file_link : null),
+          caption,
+          fileName: parsedMedia.fileName,
+          mimeType: parsedMedia.mimeType,
+          mediaUrl: parsedMedia.mediaUrl,
           status,
           reaction,
           rawPayload: msg as object,

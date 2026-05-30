@@ -226,6 +226,25 @@ export function resolveMaxPeerUserIdFromDialogParticipants(
   return null;
 }
 
+/** Avatar URL from Wappi dialog row (`image` / `thumbnail`). */
+export function readContactAvatarFromChat(
+  chat: Record<string, unknown>,
+): string | null {
+  for (const field of ['image', 'thumbnail', 'avatar', 'photo'] as const) {
+    const value = chat[field];
+    if (typeof value === 'string' && value.startsWith('http')) return value.trim();
+  }
+  const contact = chat.contact;
+  if (contact && typeof contact === 'object') {
+    const data = contact as Record<string, unknown>;
+    for (const field of ['baseUrl', 'photo', 'avatar'] as const) {
+      const value = data[field];
+      if (typeof value === 'string' && value.startsWith('http')) return value.trim();
+    }
+  }
+  return null;
+}
+
 /** Phone from chat list row (Wappi dialogs): `phone` field and `participants[].phone`. */
 export function readPhoneFromChatMetadata(
   chat: Record<string, unknown>,

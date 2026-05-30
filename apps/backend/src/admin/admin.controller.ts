@@ -6,6 +6,7 @@ import {
   Post,
   Put,
   Delete,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -103,8 +104,25 @@ export class AdminController {
   }
 
   @Get('conversations')
-  listConversations(@Req() req: { user: JwtPayload }) {
-    return this.adminService.listConversations(req.user);
+  listConversations(
+    @Req() req: { user: JwtPayload },
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.adminService.listConversations(req.user, {
+      limit: limit ? parseInt(limit, 10) : undefined,
+      cursor,
+      search,
+    });
+  }
+
+  @Get('conversations/:id')
+  getConversation(
+    @Req() req: { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.getConversation(req.user, id);
   }
 
   @Post('lines')

@@ -221,7 +221,15 @@ export interface AdminConversationDto {
   wappiChatId: string;
   contactName?: string | null;
   contactPhone?: string | null;
+  contactAvatarUrl?: string | null;
   bitrixContactId?: string | null;
   lastMessageAt: string;
   messagesCount: number;
+}
+
+export interface AdminConversationsPageDto {
+  items: AdminConversationDto[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  total: number;
 }

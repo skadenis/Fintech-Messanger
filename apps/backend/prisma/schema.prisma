@@ -96,9 +96,10 @@ model Conversation {
   lineId          String
   line            WappiLine @relation(fields: [lineId], references: [id])
   wappiChatId     String
-  contactName     String?
-  contactPhone    String?
-  bitrixContactId String?
+  contactName      String?
+  contactPhone     String?
+  contactAvatarUrl String?
+  bitrixContactId  String?
   lastMessageAt   DateTime  @default(now())
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

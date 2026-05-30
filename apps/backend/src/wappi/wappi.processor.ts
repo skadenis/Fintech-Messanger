@@ -5,7 +5,7 @@ import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared'
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from './wappi.service';
-import { mapMessageDto, normalizeMessageType } from '../common/media.utils';
+import { mapMessageDto, parseMediaFromPayload } from '../common/media.utils';
 import {
   isExcludedPhone,
   resolveContactPhone,
@@ -347,16 +347,10 @@ export class WappiProcessor extends WorkerHost {
       return;
     }
 
-    const messageType = normalizeMessageType(
-      typeof payload.type === 'string' ? payload.type : 'text',
-    );
-
-    let body = this.wappiService.extractBody(payload);
-    let caption = typeof payload.caption === 'string'
-      ? payload.caption
-      : typeof payload.title === 'string'
-        ? payload.title
-        : null;
+    const parsedMedia = parseMediaFromPayload(payload);
+    const messageType = parsedMedia.type;
+    let body = parsedMedia.body ?? this.wappiService.extractBody(payload);
+    let caption = parsedMedia.caption;
 
     if (messageType !== 'text' && body && !caption) {
       caption = body;
@@ -372,18 +366,9 @@ export class WappiProcessor extends WorkerHost {
         body,
         type: messageType,
         caption,
-        fileName:
-          typeof payload.file_name === 'string' ? payload.file_name : null,
-        mimeType:
-          typeof payload.mimetype === 'string' ? payload.mimetype : null,
-        mediaUrl:
-          typeof payload.file_link === 'string'
-            ? payload.file_link
-            : typeof payload.thumbnail === 'string'
-              ? payload.thumbnail
-              : typeof payload.picture === 'string'
-                ? payload.picture
-                : null,
+        fileName: parsedMedia.fileName,
+        mimeType: parsedMedia.mimeType,
+        mediaUrl: parsedMedia.mediaUrl,
         status: MessageStatus.DELIVERED,
         rawPayload: payload as object,
       },

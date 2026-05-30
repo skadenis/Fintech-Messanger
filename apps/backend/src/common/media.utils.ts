@@ -53,8 +53,10 @@ export function parseMediaFromPayload(payload: unknown): ParsedMedia {
   const mediaUrl =
     asString(data.file_link) ??
     asString(data.fileLink) ??
+    asString(data.url) ??
     asString(data.thumbnail) ??
-    asString(data.picture);
+    asString(data.picture) ??
+    asString(data.image);
   const previewUrl = asString(data.thumbnail) ?? asString(data.picture) ?? mediaUrl;
   const rawBody = asString(data.body);
 

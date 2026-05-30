@@ -1,5 +1,7 @@
 import {
   AdminConversationDto,
+  AdminConversationsPageDto,
+  MessageDto,
   AuthResponse,
   CreateGroupRequest,
   CreateLineRequest,
@@ -168,6 +170,37 @@ export function syncBitrixUsers(token: string) {
   }, token);
 }
 
-export function getConversations(token: string) {
-  return request<AdminConversationDto[]>('/api/admin/conversations', {}, token);
+export function getConversationsPage(
+  token: string,
+  params: { limit?: number; cursor?: string; search?: string } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.limit) query.set('limit', String(params.limit));
+  if (params.cursor) query.set('cursor', params.cursor);
+  if (params.search) query.set('search', params.search);
+  const qs = query.toString();
+  return request<AdminConversationsPageDto>(
+    `/api/admin/conversations${qs ? `?${qs}` : ''}`,
+    {},
+    token,
+  );
+}
+
+export function getConversation(token: string, id: string) {
+  return request<AdminConversationDto>(`/api/admin/conversations/${id}`, {}, token);
+}
+
+export function getConversationMessages(
+  token: string,
+  conversationId: string,
+  limit = 50,
+  cursor?: string,
+) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set('cursor', cursor);
+  return request<{
+    messages: MessageDto[];
+    hasMore: boolean;
+    nextCursor: string | null;
+  }>(`/api/conversations/${conversationId}/messages?${query}`, {}, token);
 }

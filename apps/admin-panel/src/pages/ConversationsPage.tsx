@@ -1,62 +1,91 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminConversationDto } from '@fintech/shared';
-import { useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { Search } from 'lucide-react';
-import { getConversations } from '../api';
+import { getConversationsPage } from '../api';
+import { ContactAvatar } from '../components/ContactAvatar';
 import { formatPhoneDisplay } from '../utils/phone';
 
+const PAGE_SIZE = 40;
+
 export function ConversationsPage() {
+  const navigate = useNavigate();
   const { auth, setError } = useOutletContext<{
     auth: { token: string };
     setError: (msg: string | null) => void;
   }>();
+
   const [items, setItems] = useState<AdminConversationDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const sentinelRef = useRef<HTMLTableRowElement>(null);
 
   useEffect(() => {
-    load();
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  async function load() {
-    try {
-      const data = await getConversations(auth.token);
-      setItems(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось загрузить диалоги');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const loadPage = useCallback(
+    async (nextCursor?: string | null, append = false) => {
+      try {
+        const data = await getConversationsPage(auth.token, {
+          limit: PAGE_SIZE,
+          cursor: nextCursor ?? undefined,
+          search: debouncedSearch || undefined,
+        });
+        setItems((prev) => (append ? [...prev, ...data.items] : data.items));
+        setTotal(data.total);
+        setHasMore(data.hasMore);
+        setCursor(data.nextCursor);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Не удалось загрузить диалоги');
+      }
+    },
+    [auth.token, debouncedSearch, setError],
+  );
+
+  useEffect(() => {
+    setLoading(true);
+    setItems([]);
+    setCursor(null);
+    loadPage().finally(() => setLoading(false));
+  }, [debouncedSearch, loadPage]);
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore || loading || loadingMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || !hasMore || loadingMore || !cursor) return;
+        setLoadingMore(true);
+        loadPage(cursor, true).finally(() => setLoadingMore(false));
+      },
+      { rootMargin: '200px' },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [cursor, hasMore, loadPage, loading, loadingMore]);
 
   const inputClass =
     'w-full rounded-xl bg-[var(--tg-input)] border border-transparent focus:border-[var(--tg-accent)] px-3 py-2.5 text-[14px] text-[var(--tg-text)] outline-none transition-colors';
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((item) => {
-      const linePhone = formatPhoneDisplay(item.lineProfileId).toLowerCase();
-      return (
-        item.contactName?.toLowerCase().includes(q) ||
-        item.contactPhone?.includes(q) ||
-        item.lineName.toLowerCase().includes(q) ||
-        item.lineProfileId.includes(q) ||
-        linePhone.includes(q) ||
-        item.wappiChatId.toLowerCase().includes(q) ||
-        item.messengerType.toLowerCase().includes(q)
-      );
-    });
-  }, [items, search]);
-
-  if (loading) {
-    return <div className="text-[var(--tg-text-secondary)]">Загрузка...</div>;
-  }
+  const shownLabel = useMemo(() => {
+    if (loading) return 'Загрузка…';
+    return `Показано ${items.length} из ${total}`;
+  }, [items.length, loading, total]);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold">Все диалоги</h1>
+        <span className="text-[13px] text-[var(--tg-text-secondary)]">{shownLabel}</span>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -90,22 +119,40 @@ export function ConversationsPage() {
               </tr>
             </thead>
             <tbody className="text-[14px]">
-              {filtered.length === 0 ? (
+              {!loading && items.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-5 py-8 text-center text-[var(--tg-text-secondary)]">
                     Диалоги не найдены
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => (
+                items.map((item) => (
                   <tr
                     key={item.id}
-                    className="border-b border-[var(--tg-border)] last:border-0 hover:bg-[var(--tg-input)]/50 transition-colors"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(`/conversations/${item.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/conversations/${item.id}`);
+                      }
+                    }}
+                    className="border-b border-[var(--tg-border)] last:border-0 hover:bg-[var(--tg-input)]/50 transition-colors cursor-pointer"
                   >
                     <td className="px-5 py-3 font-medium">
-                      {item.contactName || (
-                        <span className="text-[var(--tg-text-secondary)]">Без имени</span>
-                      )}
+                      <div className="flex items-center gap-3">
+                        <ContactAvatar
+                          name={item.contactName}
+                          avatarUrl={item.contactAvatarUrl}
+                          size="sm"
+                        />
+                        <span>
+                          {item.contactName || (
+                            <span className="text-[var(--tg-text-secondary)]">Без имени</span>
+                          )}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-5 py-3">
                       {item.contactPhone ? (
@@ -144,6 +191,13 @@ export function ConversationsPage() {
                     </td>
                   </tr>
                 ))
+              )}
+              {hasMore && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={6} className="px-5 py-4 text-center text-[var(--tg-text-secondary)] text-[13px]">
+                    {loadingMore ? 'Загрузка…' : ''}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
