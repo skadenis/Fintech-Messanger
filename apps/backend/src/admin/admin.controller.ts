@@ -9,6 +9,7 @@ import {
   Query,
   Req,
   UseGuards,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   AssignLinesRequest,
@@ -114,6 +115,31 @@ export class AdminController {
       limit: limit ? parseInt(limit, 10) : undefined,
       cursor,
       search,
+    });
+  }
+
+  @Get('conversations/export/preview')
+  conversationsExportPreview(
+    @Req() req: { user: JwtPayload },
+    @Query('lineId') lineId?: string,
+  ) {
+    return this.adminService.getConversationsExportPreview(req.user, lineId);
+  }
+
+  @Get('conversations/export')
+  async exportConversations(
+    @Req() req: { user: JwtPayload },
+    @Query('lineId') lineId?: string,
+  ) {
+    const data = await this.adminService.buildConversationsExportJson(
+      req.user,
+      lineId,
+    );
+    const stamp = new Date().toISOString().slice(0, 10);
+    const json = JSON.stringify(data, null, 2);
+    return new StreamableFile(Buffer.from(json, 'utf8'), {
+      type: 'application/json; charset=utf-8',
+      disposition: `attachment; filename="fintech-conversations-${stamp}.json"`,
     });
   }
 

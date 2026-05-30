@@ -190,6 +190,35 @@ export function getConversation(token: string, id: string) {
   return request<AdminConversationDto>(`/api/admin/conversations/${id}`, {}, token);
 }
 
+export function getConversationsExportPreview(token: string, lineId?: string) {
+  const query = lineId ? `?lineId=${encodeURIComponent(lineId)}` : '';
+  return request<{ conversations: number; messages: number; lineId: string | null }>(
+    `/api/admin/conversations/export/preview${query}`,
+    {},
+    token,
+  );
+}
+
+export async function downloadConversationsExport(token: string, lineId?: string) {
+  const query = lineId ? `?lineId=${encodeURIComponent(lineId)}` : '';
+  const response = await fetch(`${API_URL}/api/admin/conversations/export${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const blob = await response.blob();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `fintech-conversations-${stamp}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function getConversationMessages(
   token: string,
   conversationId: string,

@@ -8,6 +8,7 @@ import { GroupsPage } from './pages/GroupsPage';
 import { LinesPage } from './pages/LinesPage';
 import { ConversationsPage } from './pages/ConversationsPage';
 import { ConversationDetailPage } from './pages/ConversationDetailPage';
+import { ExportPage } from './pages/ExportPage';
 
 function ProtectedRoute({ auth }: { auth: AuthResponse | null }) {
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="/lines" element={<LinesPage />} />
             <Route path="/conversations" element={<ConversationsPage />} />
             <Route path="/conversations/:conversationId" element={<ConversationDetailPage />} />
+            <Route path="/export" element={<ExportPage />} />
           </Route>
         </Route>
         

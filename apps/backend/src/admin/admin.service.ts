@@ -23,6 +23,7 @@ import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared'
 import {
   isMediaMessageType,
   isWappiMediaPlaceholder,
+  messagePreviewLabel,
   parseMediaFromPayload,
 } from '../common/media.utils';
 import { runPool } from '../common/async-pool';
@@ -478,12 +479,7 @@ export class AdminService {
   ) {
     this.assertAdmin(user);
 
-    const lineScope =
-      user.role === Role.SUPER_ADMIN
-        ? {}
-        : user.groupId
-          ? { groupId: user.groupId }
-          : { groupId: '__none__' };
+    const lineScope = this.lineScopeForAdmin(user);
 
     const limit = Math.min(Math.max(options.limit ?? 40, 1), 100);
     const search = options.search?.trim();
@@ -534,15 +530,8 @@ export class AdminService {
   async getConversation(user: JwtPayload, conversationId: string) {
     this.assertAdmin(user);
 
-    const lineScope =
-      user.role === Role.SUPER_ADMIN
-        ? {}
-        : user.groupId
-          ? { groupId: user.groupId }
-          : { groupId: '__none__' };
-
     const row = await this.prisma.conversation.findFirst({
-      where: { id: conversationId, line: lineScope },
+      where: { id: conversationId, line: this.lineScopeForAdmin(user) },
       include: {
         line: true,
         _count: { select: { messages: true } },
@@ -554,6 +543,157 @@ export class AdminService {
     }
 
     return this.mapAdminConversation(row);
+  }
+
+  private lineScopeForAdmin(user: JwtPayload) {
+    if (user.role === Role.SUPER_ADMIN) return {};
+    if (user.groupId) return { groupId: user.groupId };
+    return { groupId: '__none__' };
+  }
+
+  private formatMessageForExport(msg: {
+    direction: string;
+    source: string;
+    type: string;
+    body: string | null;
+    caption: string | null;
+    fileName: string | null;
+    createdAt: Date;
+    rawPayload: unknown;
+  }) {
+    const parsed = parseMediaFromPayload({
+      ...(typeof msg.rawPayload === 'object' && msg.rawPayload
+        ? (msg.rawPayload as Record<string, unknown>)
+        : {}),
+      type: msg.type,
+      body: msg.body,
+      caption: msg.caption,
+      file_name: msg.fileName,
+    });
+
+    let text: string | null = parsed.body ?? parsed.caption ?? '';
+    if (!text && isWappiMediaPlaceholder(msg.body ?? undefined)) {
+      text = null;
+    }
+    if (!text && isMediaMessageType(parsed.type)) {
+      text = messagePreviewLabel({
+        type: parsed.type,
+        body: null,
+        fileName: msg.fileName,
+        caption: msg.caption,
+      });
+    }
+
+    return {
+      at: msg.createdAt.toISOString(),
+      direction: msg.direction,
+      source: msg.source,
+      type: parsed.type,
+      text: text || null,
+      fileName: msg.fileName,
+    };
+  }
+
+  async getConversationsExportPreview(
+    user: JwtPayload,
+    lineId?: string,
+  ): Promise<{ conversations: number; messages: number; lineId: string | null }> {
+    this.assertAdmin(user);
+
+    const where = {
+      line: this.lineScopeForAdmin(user),
+      messages: { some: {} },
+      ...(lineId ? { lineId } : {}),
+    };
+
+    const [conversations, messages] = await Promise.all([
+      this.prisma.conversation.count({ where }),
+      this.prisma.message.count({
+        where: { conversation: where },
+      }),
+    ]);
+
+    return { conversations, messages, lineId: lineId ?? null };
+  }
+
+  async buildConversationsExportJson(
+    user: JwtPayload,
+    lineId?: string,
+  ): Promise<Record<string, unknown>> {
+    this.assertAdmin(user);
+
+    const where = {
+      line: this.lineScopeForAdmin(user),
+      messages: { some: {} },
+      ...(lineId ? { lineId } : {}),
+    };
+
+    const rows = await this.prisma.conversation.findMany({
+      where,
+      include: {
+        line: {
+          select: {
+            id: true,
+            name: true,
+            messengerType: true,
+            wappiProfileId: true,
+          },
+        },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            direction: true,
+            source: true,
+            type: true,
+            body: true,
+            caption: true,
+            fileName: true,
+            createdAt: true,
+            rawPayload: true,
+          },
+        },
+      },
+      orderBy: { lastMessageAt: 'desc' },
+    });
+
+    let messageCount = 0;
+    const conversations = rows.map((row) => {
+      messageCount += row.messages.length;
+      return {
+        id: row.id,
+        wappiChatId: row.wappiChatId,
+        contactName: row.contactName,
+        contactPhone: sanitizeStoredContactPhone(
+          row.contactPhone,
+          row.line.wappiProfileId,
+          row.wappiChatId,
+          row.line.messengerType,
+        ),
+        bitrixContactId: row.bitrixContactId,
+        lastMessageAt: row.lastMessageAt.toISOString(),
+        line: {
+          id: row.line.id,
+          name: row.line.name,
+          messengerType: row.line.messengerType,
+          profileId: row.line.wappiProfileId,
+        },
+        messages: row.messages.map((m) => this.formatMessageForExport(m)),
+      };
+    });
+
+    return {
+      format: 'fintech-messenger-conversations-v1',
+      purpose:
+        'Экспорт переписок для анализа (ChatGPT и др.). Текст медиа — краткое описание, без бинарных файлов.',
+      exportedAt: new Date().toISOString(),
+      exportedBy: { userId: user.sub, role: user.role },
+      filter: { lineId: lineId ?? null },
+      stats: {
+        conversations: conversations.length,
+        messages: messageCount,
+      },
+      conversations,
+    };
   }
 
   private static readonly SYNC_DIALOG_CONCURRENCY = 8;
