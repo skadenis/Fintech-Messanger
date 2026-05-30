@@ -33,6 +33,35 @@ function isProbablyBase64(value: string): boolean {
   return /^[A-Za-z0-9+/=\r\n]+$/.test(value.slice(0, 200));
 }
 
+const WAPPI_PLACEHOLDER_TYPE: Record<string, string> = {
+  audio: 'audio',
+  document: 'document',
+  image: 'image',
+  video: 'video',
+  sticker: 'sticker',
+  ptt: 'ptt',
+  voice: 'ptt',
+  file: 'file',
+  collection: 'image',
+  photo: 'image',
+  picture: 'image',
+  attachment: 'document',
+};
+
+/** Wappi/MAX media stub in `body` or `last_message_data`, e.g. `[audio]`, `[document]`. */
+export function isWappiMediaPlaceholder(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^\[[a-z_]+\]$/i.test(value.trim());
+}
+
+export function mediaTypeFromWappiPlaceholder(
+  value: string | null | undefined,
+): string | null {
+  if (!value || !isWappiMediaPlaceholder(value)) return null;
+  const key = value.trim().slice(1, -1).toLowerCase();
+  return WAPPI_PLACEHOLDER_TYPE[key] ?? 'file';
+}
+
 export function normalizeMessageType(type?: string | null): string {
   const value = (type ?? 'text').toLowerCase();
   if (value === 'chat') return 'text';
@@ -46,7 +75,12 @@ export function isMediaMessageType(type?: string | null): boolean {
 
 export function parseMediaFromPayload(payload: unknown): ParsedMedia {
   const data = (payload ?? {}) as Record<string, unknown>;
-  const type = normalizeMessageType(asString(data.type));
+  const rawBody = asString(data.body);
+  const placeholderType = mediaTypeFromWappiPlaceholder(rawBody);
+  let type = normalizeMessageType(asString(data.type));
+  if (placeholderType && (type === 'text' || !isMediaMessageType(type))) {
+    type = placeholderType;
+  }
   const caption = asString(data.caption) ?? asString(data.title);
   const fileName = asString(data.file_name) ?? asString(data.fileName);
   const mimeType = asString(data.mimetype) ?? asString(data.mimeType);
@@ -58,10 +92,11 @@ export function parseMediaFromPayload(payload: unknown): ParsedMedia {
     asString(data.picture) ??
     asString(data.image);
   const previewUrl = asString(data.thumbnail) ?? asString(data.picture) ?? mediaUrl;
-  const rawBody = asString(data.body);
 
   let body: string | null = null;
-  if (type === 'text' || !isMediaMessageType(type)) {
+  if (isWappiMediaPlaceholder(rawBody)) {
+    body = null;
+  } else if (type === 'text' || !isMediaMessageType(type)) {
     body = rawBody;
   } else if (caption) {
     body = caption;
@@ -86,8 +121,11 @@ export function messagePreviewLabel(message: {
   fileName?: string | null;
   caption?: string | null;
 }): string {
-  const type = normalizeMessageType(message.type);
+  const placeholderType = mediaTypeFromWappiPlaceholder(message.body);
+  const type = placeholderType ?? normalizeMessageType(message.type);
   switch (type) {
+    case 'collection':
+      return '📎 Вложение';
     case 'image':
     case 'sticker':
       return '📷 Фото';
@@ -101,8 +139,16 @@ export function messagePreviewLabel(message: {
     case 'document':
     case 'file':
       return `📄 ${message.fileName ?? message.caption ?? 'Документ'}`;
-    default:
+    default: {
+      if (isWappiMediaPlaceholder(message.body)) {
+        return messagePreviewLabel({
+          ...message,
+          type: mediaTypeFromWappiPlaceholder(message.body) ?? 'file',
+          body: null,
+        });
+      }
       return message.body ?? message.caption ?? '';
+    }
   }
 }
 
@@ -123,18 +169,30 @@ export function mapMessageDto(message: {
   senderUser?: { name: string } | null;
   rawPayload?: unknown;
 }): MessageDto {
-  const parsed = parseMediaFromPayload(message.rawPayload);
+  const raw =
+    message.rawPayload && typeof message.rawPayload === 'object'
+      ? (message.rawPayload as Record<string, unknown>)
+      : {};
+  const parsed = parseMediaFromPayload({
+    ...raw,
+    type: message.type,
+    body: message.body,
+    caption: message.caption,
+    file_name: message.fileName,
+    mimetype: message.mimeType,
+    file_link: message.mediaUrl,
+  });
 
   return {
     id: message.id,
     conversationId: message.conversationId,
     direction: message.direction as MessageDto['direction'],
     source: message.source as MessageDto['source'],
-    type: normalizeMessageType(message.type || parsed.type),
-    body: message.body ?? parsed.body,
-    caption: message.caption ?? parsed.caption,
-    fileName: message.fileName ?? parsed.fileName,
-    mimeType: message.mimeType ?? parsed.mimeType,
+    type: parsed.type,
+    body: parsed.body,
+    caption: parsed.caption,
+    fileName: parsed.fileName,
+    mimeType: parsed.mimeType,
     mediaUrl: message.mediaUrl ?? parsed.mediaUrl,
     reaction: message.reaction ?? null,
     status: message.status as MessageDto['status'],

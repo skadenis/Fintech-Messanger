@@ -69,6 +69,7 @@ export class ConversationsService {
     const conversations = await this.prisma.conversation.findMany({
       where: {
         ...lineFilter,
+        messages: { some: {} },
         ...(filters.lineId ? { lineId: filters.lineId } : {}),
         ...(filters.messenger
           ? { line: { messengerType: filters.messenger } }

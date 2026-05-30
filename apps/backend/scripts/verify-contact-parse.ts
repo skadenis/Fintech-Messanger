@@ -10,6 +10,11 @@ import {
   readPhoneFromChatMetadata,
 } from '../src/common/wappi-contact.utils';
 import { resolvePhoneFromMessageBodies } from '../src/common/contact-phone.utils';
+import {
+  isWappiMediaPlaceholder,
+  messagePreviewLabel,
+  parseMediaFromPayload,
+} from '../src/common/media.utils';
 
 const linePhones = ['79055734880'];
 
@@ -98,6 +103,15 @@ const checks = [
   ['WA phone', waParsed.contactPhone === '79115576367'],
   ['WA name', waParsed.contactName === 'Макс Моряк ⚓'],
   ['WA skips line phone', waParsed.contactPhone !== linePhones[0]],
+  ['Wappi placeholder detected', isWappiMediaPlaceholder('[audio]')],
+  [
+    'placeholder → audio preview',
+    messagePreviewLabel({ type: 'text', body: '[audio]' }) === '🎤 Аудио',
+  ],
+  [
+    'parse [document] as document',
+    parseMediaFromPayload({ type: 'text', body: '[document]' }).type === 'document',
+  ],
 ];
 
 let failed = 0;

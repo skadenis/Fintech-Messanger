@@ -21,7 +21,7 @@ import { BitrixService } from '../bitrix/bitrix.service';
 import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
 import {
-  normalizeMessageType,
+  isWappiMediaPlaceholder,
   parseMediaFromPayload,
 } from '../common/media.utils';
 import { runPool } from '../common/async-pool';
@@ -489,6 +489,7 @@ export class AdminService {
 
     const where = {
       line: lineScope,
+      messages: { some: {} },
       ...(search
         ? {
             OR: [
@@ -760,6 +761,10 @@ export class AdminService {
       return { chats: 0, messages: 0 };
     }
 
+    if (messages.length === 0) {
+      return { chats: 0, messages: 0 };
+    }
+
     const linePhones = detectLinePhonesFromMessages(messages);
     const fromMessages = resolveContactPhoneFromMessages(
       messages,
@@ -882,10 +887,6 @@ export class AdminService {
       },
     });
 
-    if (messages.length === 0) {
-      return { chats: 1, messages: 0 };
-    }
-
     let syncedMessages = 0;
     for (const msg of messages) {
       const wappiMessageId = msg.id;
@@ -912,7 +913,8 @@ export class AdminService {
         !body &&
         typeof msg.body === 'string' &&
         !msg.body.startsWith('/9j/') &&
-        msg.body.length < 5000
+        msg.body.length < 5000 &&
+        !isWappiMediaPlaceholder(msg.body)
       ) {
         body = msg.body;
       }
