@@ -84,6 +84,18 @@ export function dedupeWappiDialogs(
   return [...byNorm.values()];
 }
 
+/** Phone from chat list row (Wappi dialogs). */
+export function readPhoneFromChatMetadata(
+  chat: Record<string, unknown>,
+  excludedPhones: string[],
+): string | null {
+  for (const field of ['phone', 'number', 'contact_phone'] as const) {
+    const phone = readContactPhoneField(chat[field], excludedPhones);
+    if (phone) return phone;
+  }
+  return null;
+}
+
 function parseMaxContactName(data: Record<string, unknown>): string | null {
   const names = data.names;
   if (!Array.isArray(names)) return null;
@@ -188,18 +200,6 @@ export function parseWappiContactResponse(
   }
 
   return { contactName, contactPhone, contactId };
-}
-
-/** Phone from chat list metadata (after line phones are known). */
-export function readPhoneFromChatMetadata(
-  chat: Record<string, unknown>,
-  excludedPhones: string[],
-): string | null {
-  for (const field of ['phone', 'number', 'contact_phone'] as const) {
-    const phone = readContactPhoneField(chat[field], excludedPhones);
-    if (phone) return phone;
-  }
-  return null;
 }
 
 export function readChatLastMessageTime(chat: Record<string, unknown>): Date | null {

@@ -1,15 +1,24 @@
 import { MessageDirection } from '@fintech/shared';
 import { normalizePhone, phonesMatch } from './utils';
 
-/** Mobile / landline digits (not Telegram user id, not MAX internal id). */
+/** Mobile / landline digits (not Telegram user id, not short MAX peer id). */
 export function looksLikePhoneNumber(value: string): boolean {
   const digits = normalizePhone(value);
   if (!digits) return false;
   if (/^7\d{10}$/.test(digits)) return true;
   if (/^375\d{9}$/.test(digits)) return true;
-  // Require at least 11 digits to filter out 9-10 digit Telegram IDs
+  // 10-digit Russian mobile (79XXXXXXXXX)
+  if (/^79\d{9}$/.test(digits)) return true;
   if (/^\d{11,15}$/.test(digits)) return true;
   return false;
+}
+
+/** MAX chat/user id in messages (not a phone). */
+export function isLikelyMaxPeerUserId(value: string): boolean {
+  const digits = normalizePhone(value);
+  if (!digits) return false;
+  if (looksLikePhoneNumber(digits)) return false;
+  return digits.length <= 10;
 }
 
 export function isLinePhone(
@@ -72,7 +81,13 @@ export function resolveContactPhoneFromMessages(
   linePhones: string[],
   messengerType: string,
 ): string | null {
-  for (const msg of messages) {
+  // Incoming messages carry the peer phone on MAX; outgoing often only have line number in `from`.
+  const ordered = [
+    ...messages.filter((m) => !m.fromMe),
+    ...messages.filter((m) => m.fromMe),
+  ];
+
+  for (const msg of ordered) {
     const direction = msg.fromMe
       ? MessageDirection.OUTGOING
       : MessageDirection.INCOMING;
@@ -91,7 +106,7 @@ export function resolveContactPhoneFromMessages(
 }
 
 export function extractPhoneFromChatId(chatId: string, messengerType?: string): string | null {
-  if (messengerType === 'TELEGRAM') return null;
+  if (messengerType === 'TELEGRAM' || messengerType === 'MAX') return null;
   
   const local = chatId
     .replace('@c.us', '')
@@ -138,9 +153,20 @@ export function resolveContactPhone(params: {
   const ordered: unknown[] = [];
 
   if (params.direction === MessageDirection.INCOMING) {
-    ordered.push(params.payload.from, params.payload.contact_phone, params.payload.phone);
+    ordered.push(
+      params.payload.from,
+      params.payload.contact_phone,
+      params.payload.phone,
+    );
   } else {
-    ordered.push(params.payload.to, params.payload.contact_phone, params.payload.phone);
+    // Outgoing: `to` is often MAX user id, not phone — check phone fields only if they look like phones
+    ordered.push(params.payload.contact_phone, params.payload.phone);
+    if (
+      typeof params.payload.to === 'string' &&
+      looksLikePhoneNumber(params.payload.to)
+    ) {
+      ordered.push(params.payload.to);
+    }
   }
 
   for (const candidate of ordered) {

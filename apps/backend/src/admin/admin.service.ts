@@ -647,22 +647,16 @@ export class AdminService {
     );
 
     const linePhones = detectLinePhonesFromMessages(messages);
+    const hintPhone = readPhoneFromChatMetadata(chat, linePhones);
+
     const contactParams = buildContactGetParams(
       normalizedChatId,
       line.messengerType,
-      undefined,
+      hintPhone ?? undefined,
       linePhones,
     );
 
-    const contactResponse =
-      contactParams.recipient || contactParams.phone
-        ? await this.wappiService.getContact(line, contactParams).catch((err) => {
-            console.error(
-              `Failed to fetch contact ${JSON.stringify(contactParams)}: ${err}`,
-            );
-            return null;
-          })
-        : null;
+    const contactResponse = await this.wappiService.getContact(line, contactParams);
 
     const parsed = parseWappiContactResponse(
       contactResponse as Record<string, unknown> | null,

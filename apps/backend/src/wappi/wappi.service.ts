@@ -185,17 +185,30 @@ export class WappiService {
     });
   }
 
+  /**
+   * MAX: contact/get often returns 400 for recipient=id; phone param may work when available.
+   */
   async getContact(
     line: WappiLine,
     params: { recipient?: string; phone?: string },
-  ) {
+  ): Promise<Record<string, unknown> | null> {
     const query: Record<string, string> = {};
     if (params.recipient) query.recipient = params.recipient;
     if (params.phone) query.phone = params.phone;
     if (!query.recipient && !query.phone) {
       throw new Error('Wappi getContact requires recipient or phone');
     }
-    return this.get(line, '/sync/contact/get', query);
+    try {
+      return (await this.get(line, '/sync/contact/get', query)) as Record<
+        string,
+        unknown
+      >;
+    } catch (err) {
+      if (line.messengerType === 'MAX') {
+        return null;
+      }
+      throw err;
+    }
   }
 
   async getMessages(line: WappiLine, chatId: string, limit = 100, offset = 0) {

@@ -180,22 +180,25 @@ export class WappiProcessor extends WorkerHost {
           line,
           contactParams,
         );
-        const parsed = parseWappiContactResponse(
-          contactResponse as Record<string, unknown>,
-          linePhones,
-          line.messengerType,
-        );
+        if (contactResponse) {
+          const parsed = parseWappiContactResponse(
+            contactResponse,
+            linePhones,
+            line.messengerType,
+          );
 
-        if (parsed.contactName) {
-          updateObj.contactName = parsed.contactName;
-        }
-        if (parsed.contactPhone) {
-          contactPhone = parsed.contactPhone;
-          updateObj.contactPhone = contactPhone;
-          if (!bitrixContactId) {
-            bitrixContactId = await this.bitrixService.findContactByPhone(contactPhone);
-            if (bitrixContactId) {
-              updateObj.bitrixContactId = bitrixContactId;
+          if (parsed.contactName) {
+            updateObj.contactName = parsed.contactName;
+          }
+          if (parsed.contactPhone) {
+            contactPhone = parsed.contactPhone;
+            updateObj.contactPhone = contactPhone;
+            if (!bitrixContactId) {
+              bitrixContactId =
+                await this.bitrixService.findContactByPhone(contactPhone);
+              if (bitrixContactId) {
+                updateObj.bitrixContactId = bitrixContactId;
+              }
             }
           }
         }
