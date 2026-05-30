@@ -5,7 +5,9 @@ import {
   parseMaxContactNameUserId,
   parseWappiContactResponse,
   resolveMaxContactNameUserIdFromMessages,
+  resolveMaxPeerUserIdFromDialogParticipants,
   resolveMaxPeerUserIdFromMessages,
+  readPhoneFromChatMetadata,
 } from '../src/common/wappi-contact.utils';
 import { resolvePhoneFromMessageBodies } from '../src/common/contact-phone.utils';
 
@@ -55,6 +57,16 @@ const phoneFromBody = resolvePhoneFromMessageBodies(
   linePhones,
 );
 
+const annaDialog = {
+  id: '205160429',
+  name: 'Анна',
+  phone: '79116265432',
+  participants: [
+    { user_id: '15349106', is_me: true, phone: '' },
+    { user_id: '214977183', is_me: false, phone: '' },
+  ],
+};
+
 const checks = [
   ['MAX phone', maxParsed.contactPhone === '79816593725'],
   ['MAX name', maxParsed.contactName === 'Сережа'],
@@ -75,6 +87,14 @@ const checks = [
     ]),
   ],
   ['phone from message body', phoneFromBody === '89051112233'],
+  [
+    'dialog list phone',
+    readPhoneFromChatMetadata(annaDialog, linePhones) === '79116265432',
+  ],
+  [
+    'dialog participant peer id',
+    resolveMaxPeerUserIdFromDialogParticipants(annaDialog) === '214977183',
+  ],
   ['WA phone', waParsed.contactPhone === '79115576367'],
   ['WA name', waParsed.contactName === 'Макс Моряк ⚓'],
   ['WA skips line phone', waParsed.contactPhone !== linePhones[0]],

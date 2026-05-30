@@ -35,6 +35,7 @@ import {
   normalizeWappiChatId,
   parseWappiContactResponse,
   resolveMaxContactNameUserIdFromMessages,
+  resolveMaxPeerUserIdFromDialogParticipants,
   resolveMaxPeerUserIdFromMessages,
   dedupeWappiDialogs,
   readChatLastMessageTime,
@@ -684,6 +685,10 @@ export class AdminService {
       line.messengerType === 'MAX'
         ? resolveMaxContactNameUserIdFromMessages(messages)
         : null;
+    const peerFromDialog =
+      line.messengerType === 'MAX'
+        ? resolveMaxPeerUserIdFromDialogParticipants(chat)
+        : null;
 
     let contactResponse: Record<string, unknown> | null = null;
     let contactParams: { recipient?: string; phone?: string } = {};
@@ -691,7 +696,7 @@ export class AdminService {
     if (line.messengerType === 'MAX') {
       const attempts = buildMaxContactGetAttempts(
         hintPhone ?? undefined,
-        [peerUserId, contactNameUserId],
+        [peerUserId, contactNameUserId, peerFromDialog],
         linePhones,
       );
       for (const params of attempts) {
@@ -729,6 +734,7 @@ export class AdminService {
         contactParams,
         peerUserId,
         contactNameUserId,
+        peerFromDialog,
         parsedContact: { phone: parsed.contactPhone, name: parsed.contactName },
         linePhones,
         messageCount: messages.length,

@@ -174,7 +174,36 @@ export function dedupeWappiDialogs(
   return [...byNorm.values()];
 }
 
-/** Phone from chat list row (Wappi dialogs). */
+function dialogParticipantsOtherThanMe(
+  chat: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const raw = chat.participants;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) &&
+      typeof item === 'object' &&
+      (item as Record<string, unknown>).is_me !== true,
+  );
+}
+
+/**
+ * Peer user id from GET /sync/chats/get dialog row (`participants`, non-me side).
+ * Complements message-based peer id when history is outbound-only.
+ */
+export function resolveMaxPeerUserIdFromDialogParticipants(
+  chat: Record<string, unknown>,
+): string | null {
+  for (const participant of dialogParticipantsOtherThanMe(chat)) {
+    const id = String(participant.user_id ?? '').trim();
+    if (!id || !/^\d+$/.test(id)) continue;
+    if (looksLikePhoneNumber(id)) continue;
+    return id;
+  }
+  return null;
+}
+
+/** Phone from chat list row (Wappi dialogs): `phone` field and `participants[].phone`. */
 export function readPhoneFromChatMetadata(
   chat: Record<string, unknown>,
   excludedPhones: string[],
@@ -183,6 +212,12 @@ export function readPhoneFromChatMetadata(
     const phone = readContactPhoneField(chat[field], excludedPhones);
     if (phone) return phone;
   }
+
+  for (const participant of dialogParticipantsOtherThanMe(chat)) {
+    const phone = readContactPhoneField(participant.phone, excludedPhones);
+    if (phone) return phone;
+  }
+
   return null;
 }
 
