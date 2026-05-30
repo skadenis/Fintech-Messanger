@@ -11,6 +11,7 @@ import {
 } from '../src/common/wappi-contact.utils';
 import { resolvePhoneFromMessageBodies } from '../src/common/contact-phone.utils';
 import {
+  extractMediaUrlFromPayload,
   isWappiMediaPlaceholder,
   messagePreviewLabel,
   parseMediaFromPayload,
@@ -111,6 +112,19 @@ const checks = [
   [
     'parse [document] as document',
     parseMediaFromPayload({ type: 'text', body: '[document]' }).type === 'document',
+  ],
+  [
+    'attaches url',
+    extractMediaUrlFromPayload({
+      attaches: [{ type: 'FILE', url: 'https://wapi-uploads.example/file.pdf' }],
+    }) === 'https://wapi-uploads.example/file.pdf',
+  ],
+  [
+    's3Info url',
+    extractMediaUrlFromPayload({
+      type: 'audio',
+      s3Info: { url: 'https://a.oneme.ru/audio?cid=1' },
+    }) === 'https://a.oneme.ru/audio?cid=1',
   ],
 ];
 

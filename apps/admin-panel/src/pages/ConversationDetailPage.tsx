@@ -151,10 +151,8 @@ export function ConversationDetailPage() {
                         : 'bg-[var(--tg-input)] border border-[var(--tg-border)]'
                     }`}
                   >
-                    {msg.type === 'text' && (msg.body || msg.caption) ? (
+                    {msg.type === 'text' ? (
                       <p className="whitespace-pre-wrap break-words">{msg.body ?? msg.caption ?? ''}</p>
-                    ) : msg.type === 'text' ? (
-                      <p className="text-[var(--tg-text-secondary)]">Сообщение</p>
                     ) : (
                       <AdminMessageMedia message={msg} token={auth.token} />
                     )}

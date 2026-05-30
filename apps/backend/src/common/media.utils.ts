@@ -73,25 +73,99 @@ export function isMediaMessageType(type?: string | null): boolean {
   return MEDIA_TYPES.has(normalizeMessageType(type));
 }
 
+const WAPPI_ATTACH_TYPE: Record<string, string> = {
+  PHOTO: 'image',
+  IMAGE: 'image',
+  VIDEO: 'video',
+  AUDIO: 'audio',
+  PTT: 'ptt',
+  VOICE: 'ptt',
+  FILE: 'document',
+  DOCUMENT: 'document',
+  STICKER: 'sticker',
+};
+
+function mediaTypeFromWappiAttach(attach: Record<string, unknown>): string | null {
+  const raw = asString(attach.type);
+  if (!raw) return null;
+  return WAPPI_ATTACH_TYPE[raw.toUpperCase()] ?? null;
+}
+
+/** MAX/TG/WA: file_link, attaches[].url, s3Info.url, thumbnail, … */
+export function extractMediaUrlFromPayload(
+  data: Record<string, unknown>,
+): string | null {
+  for (const field of [
+    'file_link',
+    'fileLink',
+    'url',
+    'picture',
+    'image',
+  ] as const) {
+    const value = asString(data[field]);
+    if (value?.startsWith('http')) return value;
+  }
+
+  const thumb = asString(data.thumbnail);
+  if (thumb?.startsWith('http') && !thumb.includes('/t_')) {
+    return thumb;
+  }
+
+  const s3Info = data.s3Info;
+  if (s3Info && typeof s3Info === 'object') {
+    const s3Url = asString((s3Info as Record<string, unknown>).url);
+    if (s3Url?.startsWith('http')) return s3Url;
+  }
+
+  const attaches = data.attaches;
+  if (Array.isArray(attaches)) {
+    for (const item of attaches) {
+      if (!item || typeof item !== 'object') continue;
+      const attach = item as Record<string, unknown>;
+      for (const field of ['url', 'baseUrl', 'file_link'] as const) {
+        const value = asString(attach[field]);
+        if (value?.startsWith('http')) return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function inferMediaTypeFromPayload(data: Record<string, unknown>): string | null {
+  const attaches = data.attaches;
+  if (Array.isArray(attaches)) {
+    for (const item of attaches) {
+      if (!item || typeof item !== 'object') continue;
+      const fromAttach = mediaTypeFromWappiAttach(item as Record<string, unknown>);
+      if (fromAttach) return fromAttach;
+    }
+  }
+  const mime = asString(data.mimetype) ?? asString(data.mimeType);
+  if (mime?.startsWith('image/')) return 'image';
+  if (mime?.startsWith('video/')) return 'video';
+  if (mime?.startsWith('audio/')) return 'audio';
+  return null;
+}
+
 export function parseMediaFromPayload(payload: unknown): ParsedMedia {
   const data = (payload ?? {}) as Record<string, unknown>;
   const rawBody = asString(data.body);
   const placeholderType = mediaTypeFromWappiPlaceholder(rawBody);
   let type = normalizeMessageType(asString(data.type));
+  const attachType = inferMediaTypeFromPayload(data);
+  if (attachType && (type === 'text' || !isMediaMessageType(type))) {
+    type = attachType;
+  }
   if (placeholderType && (type === 'text' || !isMediaMessageType(type))) {
     type = placeholderType;
   }
   const caption = asString(data.caption) ?? asString(data.title);
   const fileName = asString(data.file_name) ?? asString(data.fileName);
   const mimeType = asString(data.mimetype) ?? asString(data.mimeType);
-  const mediaUrl =
-    asString(data.file_link) ??
-    asString(data.fileLink) ??
-    asString(data.url) ??
-    asString(data.thumbnail) ??
-    asString(data.picture) ??
-    asString(data.image);
-  const previewUrl = asString(data.thumbnail) ?? asString(data.picture) ?? mediaUrl;
+  const mediaUrl = extractMediaUrlFromPayload(data);
+  const previewUrl =
+    asString(data.thumbnail)?.startsWith('http') ? asString(data.thumbnail) : mediaUrl;
 
   let body: string | null = null;
   if (isWappiMediaPlaceholder(rawBody)) {

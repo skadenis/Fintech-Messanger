@@ -13,11 +13,17 @@ import {
   SendMessageRequest,
 } from '@fintech/shared';
 import { AccessService } from '../common/access.service';
-import { mapMessageDto } from '../common/media.utils';
+import {
+  extractMediaUrlFromPayload,
+  isMediaMessageType,
+  mapMessageDto,
+  parseMediaFromPayload,
+} from '../common/media.utils';
 import { JwtPayload } from '../common/guards';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { WappiService } from '../wappi/wappi.service';
+import { WappiLine } from '@prisma/client';
 
 const UPLOADS_DIR = join(process.cwd(), 'uploads');
 
@@ -234,6 +240,41 @@ export class MessagesService {
     }
   }
 
+  private async resolveRemoteMediaUrl(
+    message: {
+      id: string;
+      mediaUrl: string | null;
+      type: string;
+      wappiMessageId: string | null;
+      rawPayload: unknown;
+    },
+    line: WappiLine,
+  ): Promise<string | null> {
+    const payload = (message.rawPayload ?? {}) as Record<string, unknown>;
+    const parsed = parseMediaFromPayload({
+      ...payload,
+      type: message.type,
+      file_link: message.mediaUrl,
+    });
+
+    let url =
+      (message.mediaUrl?.startsWith('http') ? message.mediaUrl : null) ??
+      parsed.mediaUrl ??
+      extractMediaUrlFromPayload(payload);
+
+    if (!url && message.wappiMessageId && isMediaMessageType(parsed.type)) {
+      url = await this.wappiService.downloadMessageMedia(line, message.wappiMessageId);
+      if (url) {
+        await this.prisma.message.update({
+          where: { id: message.id },
+          data: { mediaUrl: url },
+        });
+      }
+    }
+
+    return url;
+  }
+
   async getAttachment(user: JwtPayload, messageId: string) {
     const message = await this.prisma.message.findUnique({
       where: { id: messageId },
@@ -270,22 +311,32 @@ export class MessagesService {
       message.mimeType ??
       (typeof payload.mimetype === 'string' ? payload.mimetype : 'application/octet-stream');
 
-    if (body && body.length > 100) {
-      const buffer = Buffer.from(body, 'base64');
-      return new StreamableFile(buffer, {
-        type: mimeType,
-        disposition: `inline; filename="${message.fileName ?? 'file'}"`,
-      });
+    if (body && body.length > 100 && !body.startsWith('[')) {
+      try {
+        const buffer = Buffer.from(body, 'base64');
+        return new StreamableFile(buffer, {
+          type: mimeType,
+          disposition: `inline; filename="${message.fileName ?? 'file'}"`,
+        });
+      } catch {
+        // fall through to URL download
+      }
     }
 
-    if (message.mediaUrl?.startsWith('http')) {
-      const response = await fetch(message.mediaUrl);
+    const remoteUrl = await this.resolveRemoteMediaUrl(
+      message,
+      message.conversation.line,
+    );
+
+    if (remoteUrl) {
+      const response = await fetch(remoteUrl);
       if (!response.ok) {
         throw new NotFoundException('Attachment not found');
       }
       const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get('content-type') ?? mimeType;
       return new StreamableFile(buffer, {
-        type: mimeType,
+        type: contentType,
         disposition: `inline; filename="${message.fileName ?? 'file'}"`,
       });
     }

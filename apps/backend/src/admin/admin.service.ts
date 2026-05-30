@@ -21,6 +21,7 @@ import { BitrixService } from '../bitrix/bitrix.service';
 import { WappiService } from '../wappi/wappi.service';
 import { MessageDirection, MessageSource, MessageStatus } from '@fintech/shared';
 import {
+  isMediaMessageType,
   isWappiMediaPlaceholder,
   parseMediaFromPayload,
 } from '../common/media.utils';
@@ -902,6 +903,13 @@ export class AdminService {
         : MessageDirection.INCOMING;
       const parsedMedia = parseMediaFromPayload(msg);
       const messageType = parsedMedia.type;
+      let mediaUrl = parsedMedia.mediaUrl;
+      if (!mediaUrl && wappiMessageId && isMediaMessageType(messageType)) {
+        mediaUrl = await this.wappiService.downloadMessageMedia(
+          line,
+          String(wappiMessageId),
+        );
+      }
 
       let status = MessageStatus.DELIVERED;
       if (msg.isRead || msg.delivery_status === 'read') status = MessageStatus.READ;
@@ -940,7 +948,7 @@ export class AdminService {
           caption,
           fileName: parsedMedia.fileName,
           mimeType: parsedMedia.mimeType,
-          mediaUrl: parsedMedia.mediaUrl,
+          mediaUrl,
           status,
           reaction,
           rawPayload: msg as object,

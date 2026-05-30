@@ -3,7 +3,16 @@ import { MessageDto } from '@fintech/shared';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-const MEDIA_TYPES = new Set(['image', 'video', 'sticker', 'document', 'file']);
+const MEDIA_TYPES = new Set([
+  'image',
+  'video',
+  'video_note',
+  'sticker',
+  'document',
+  'file',
+  'audio',
+  'ptt',
+]);
 
 export function AdminMessageMedia({
   message,
@@ -12,16 +21,13 @@ export function AdminMessageMedia({
   message: MessageDto;
   token: string;
 }) {
-  const [src, setSrc] = useState<string | null>(
-    message.mediaUrl?.startsWith('http') ? message.mediaUrl : null,
-  );
+  const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
-    if (message.mediaUrl?.startsWith('http')) {
-      setSrc(message.mediaUrl);
+    if (!MEDIA_TYPES.has(message.type)) {
+      setSrc(null);
       return;
     }
-    if (!MEDIA_TYPES.has(message.type)) return;
 
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -51,9 +57,13 @@ export function AdminMessageMedia({
   if (!src) {
     return (
       <span className="text-[13px] text-[var(--tg-text-secondary)]">
-        {message.caption || message.fileName || `[${message.type}]`}
+        {message.caption || message.fileName || 'Загрузка…'}
       </span>
     );
+  }
+
+  if (message.type === 'audio' || message.type === 'ptt') {
+    return <audio src={src} controls className="w-full max-w-xs h-9" />;
   }
 
   if (message.type === 'image' || message.type === 'sticker') {

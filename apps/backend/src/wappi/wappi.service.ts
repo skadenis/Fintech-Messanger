@@ -211,6 +211,25 @@ export class WappiService {
     }
   }
 
+  /**
+   * Returns temporary HTTPS URL for message media (MAX/TG/WA).
+   * Response JSON: { file_link, file_link_expire }.
+   */
+  async downloadMessageMedia(
+    line: WappiLine,
+    messageId: string,
+  ): Promise<string | null> {
+    try {
+      const raw = (await this.get(line, '/sync/message/media/download', {
+        message_id: messageId,
+      })) as Record<string, unknown>;
+      const link = raw?.file_link;
+      return typeof link === 'string' && link.startsWith('http') ? link : null;
+    } catch {
+      return null;
+    }
+  }
+
   async getMessages(line: WappiLine, chatId: string, limit = 100, offset = 0) {
     if (line.messengerType === 'TELEGRAM') {
       return this.get(line, '/sync/messages/get', {

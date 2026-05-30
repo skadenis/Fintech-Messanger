@@ -11,17 +11,11 @@ function isMediaType(type: string) {
 }
 
 function useAttachmentSrc(message: MessageDto, token?: string) {
-  const [src, setSrc] = useState<string | null>(
-    message.mediaUrl?.startsWith('http') ? message.mediaUrl : null,
-  );
+  const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
-    if (message.mediaUrl?.startsWith('http')) {
-      setSrc(message.mediaUrl);
-      return;
-    }
-
     if (!token || !isMediaType(message.type)) {
+      setSrc(null);
       return;
     }
 
