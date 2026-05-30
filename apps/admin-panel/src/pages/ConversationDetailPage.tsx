@@ -3,8 +3,9 @@ import { AdminConversationDto, MessageDto } from '@fintech/shared';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { getConversation, getConversationMessages } from '../api';
-import { AdminMessageMedia } from '../components/AdminMessageMedia';
+import { AdminMessageMedia, ADMIN_MEDIA_TYPES } from '../components/AdminMessageMedia';
 import { ContactAvatar } from '../components/ContactAvatar';
+import { Linkify } from '../components/Linkify';
 import { formatPhoneDisplay } from '../utils/phone';
 
 export function ConversationDetailPage() {
@@ -139,6 +140,9 @@ export function ConversationDetailPage() {
           ) : (
             messages.map((msg) => {
               const outgoing = msg.direction === 'OUTGOING';
+              const showAsMedia = ADMIN_MEDIA_TYPES.has(msg.type);
+              const textContent = msg.body ?? msg.caption ?? '';
+
               return (
                 <div
                   key={msg.id}
@@ -151,13 +155,17 @@ export function ConversationDetailPage() {
                         : 'bg-[var(--tg-input)] border border-[var(--tg-border)]'
                     }`}
                   >
-                    {msg.type === 'text' ? (
-                      <p className="whitespace-pre-wrap break-words">{msg.body ?? msg.caption ?? ''}</p>
-                    ) : (
+                    {showAsMedia ? (
                       <AdminMessageMedia message={msg} token={auth.token} />
-                    )}
-                    {msg.caption && msg.type !== 'text' && (
-                      <p className="mt-1 text-[13px] whitespace-pre-wrap break-words">{msg.caption}</p>
+                    ) : textContent ? (
+                      <p className="whitespace-pre-wrap break-words">
+                        <Linkify>{textContent}</Linkify>
+                      </p>
+                    ) : null}
+                    {msg.caption && showAsMedia && (
+                      <p className="mt-1 text-[13px] whitespace-pre-wrap break-words">
+                        <Linkify>{msg.caption}</Linkify>
+                      </p>
                     )}
                     <p className="text-[11px] text-[var(--tg-text-secondary)] mt-1 text-right">
                       {new Date(msg.createdAt).toLocaleString('ru-RU', {

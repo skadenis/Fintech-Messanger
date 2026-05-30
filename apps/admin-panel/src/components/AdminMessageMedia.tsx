@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { MessageDto } from '@fintech/shared';
+import { ImageLightbox } from './ImageLightbox';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-const MEDIA_TYPES = new Set([
+export const ADMIN_MEDIA_TYPES = new Set([
   'image',
   'video',
   'video_note',
@@ -14,6 +15,8 @@ const MEDIA_TYPES = new Set([
   'ptt',
 ]);
 
+type LoadState = 'idle' | 'loading' | 'ready' | 'error';
+
 export function AdminMessageMedia({
   message,
   token,
@@ -22,12 +25,19 @@ export function AdminMessageMedia({
   token: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [state, setState] = useState<LoadState>('idle');
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
-  useEffect(() => {
-    if (!MEDIA_TYPES.has(message.type)) {
+  const load = useCallback(() => {
+    if (!ADMIN_MEDIA_TYPES.has(message.type)) {
+      setState('idle');
       setSrc(null);
       return;
     }
+
+    setState('loading');
+    setSrc(null);
 
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -36,29 +46,48 @@ export function AdminMessageMedia({
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => {
-        if (!res.ok) throw new Error('attachment failed');
+        if (!res.ok) throw new Error(`attachment ${res.status}`);
         return res.blob();
       })
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
         setSrc(objectUrl);
+        setState('ready');
       })
       .catch(() => {
-        if (!cancelled) setSrc(null);
+        if (!cancelled) setState('error');
       });
 
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [message.id, message.mediaUrl, message.type, token]);
+  }, [message.id, message.type, token]);
 
-  if (!src) {
+  useEffect(() => load(), [load, retryKey]);
+
+  if (!ADMIN_MEDIA_TYPES.has(message.type)) {
+    return null;
+  }
+
+  if (state === 'loading' || state === 'idle') {
     return (
-      <span className="text-[13px] text-[var(--tg-text-secondary)]">
-        {message.caption || message.fileName || 'Загрузка…'}
+      <span className="text-[13px] text-[var(--tg-text-secondary)] animate-pulse">
+        {message.caption || message.fileName || 'Загрузка файла…'}
       </span>
+    );
+  }
+
+  if (state === 'error' || !src) {
+    return (
+      <button
+        type="button"
+        onClick={() => setRetryKey((k) => k + 1)}
+        className="text-left text-[13px] text-[var(--tg-danger)] hover:underline"
+      >
+        {message.fileName ?? 'Вложение'} — не удалось загрузить. Нажмите, чтобы повторить.
+      </button>
     );
   }
 
@@ -68,22 +97,51 @@ export function AdminMessageMedia({
 
   if (message.type === 'image' || message.type === 'sticker') {
     return (
-      <img
+      <>
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="block rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-[var(--tg-accent)]"
+          title="Открыть в полном размере"
+        >
+          <img
+            src={src}
+            alt={message.caption ?? message.fileName ?? ''}
+            className="max-w-xs max-h-64 rounded-lg object-contain cursor-zoom-in hover:opacity-95 transition-opacity"
+            loading="lazy"
+          />
+        </button>
+        {lightboxOpen && (
+          <ImageLightbox
+            src={src}
+            alt={message.caption ?? message.fileName ?? ''}
+            onClose={() => setLightboxOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (message.type === 'video' || message.type === 'video_note') {
+    return (
+      <video
         src={src}
-        alt=""
-        className="max-w-xs max-h-64 rounded-lg object-contain"
-        loading="lazy"
-        referrerPolicy="no-referrer"
+        controls
+        className={`max-w-xs max-h-64 bg-black/30 ${
+          message.type === 'video_note' ? 'rounded-full aspect-square w-56 h-56 object-cover' : 'rounded-lg'
+        }`}
       />
     );
   }
 
-  if (message.type === 'video') {
-    return <video src={src} controls className="max-w-xs max-h-64 rounded-lg" />;
-  }
-
   return (
-    <a href={src} target="_blank" rel="noreferrer" className="text-[var(--tg-accent)] underline text-[13px]">
+    <a
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      download={message.fileName ?? undefined}
+      className="inline-flex items-center gap-2 text-[var(--tg-accent)] underline text-[13px] hover:opacity-80"
+    >
       {message.fileName ?? 'Открыть файл'}
     </a>
   );

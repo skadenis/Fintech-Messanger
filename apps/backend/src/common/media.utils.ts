@@ -66,6 +66,7 @@ export function normalizeMessageType(type?: string | null): string {
   const value = (type ?? 'text').toLowerCase();
   if (value === 'chat') return 'text';
   if (value === 'voice') return 'ptt';
+  if (value === 'link') return 'text';
   return value;
 }
 
