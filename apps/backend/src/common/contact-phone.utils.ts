@@ -153,11 +153,20 @@ export function resolveContactPhone(params: {
   const ordered: unknown[] = [];
 
   if (params.direction === MessageDirection.INCOMING) {
-    ordered.push(
-      params.payload.from,
-      params.payload.contact_phone,
-      params.payload.phone,
-    );
+    // MAX webhooks: contact_phone is the peer mobile; from may be user id or phone.
+    if (params.messengerType === 'MAX') {
+      ordered.push(
+        params.payload.contact_phone,
+        params.payload.from,
+        params.payload.phone,
+      );
+    } else {
+      ordered.push(
+        params.payload.from,
+        params.payload.contact_phone,
+        params.payload.phone,
+      );
+    }
   } else {
     // Outgoing: `to` is often MAX user id, not phone — check phone fields only if they look like phones
     ordered.push(params.payload.contact_phone, params.payload.phone);

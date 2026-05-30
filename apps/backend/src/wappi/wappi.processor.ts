@@ -98,25 +98,28 @@ export class WappiProcessor extends WorkerHost {
   }
 
   private async handleMessage(lineId: string, whType: string, payload: Record<string, any>) {
-    // В некоторых случаях (например, исходящее API), chatId прилетает прямо в payload.chatId
-    // Или же мы вытаскиваем его как обычно через wappiService
+    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
+    if (!line) return;
+
     let chatId = this.wappiService.extractChatId(payload);
     if (!chatId && typeof payload.chatId === 'string') {
       chatId = payload.chatId;
     }
-    
-    // Если всё равно нет chatId, но есть to и from (например для outgoing_message_api)
+
     if (!chatId && whType.startsWith('outgoing')) {
-       chatId = typeof payload.to === 'string' ? payload.to : chatId;
+      chatId = typeof payload.to === 'string' ? payload.to : chatId;
     }
-    if (!chatId && whType === 'incoming_message') {
-       chatId = typeof payload.from === 'string' ? payload.from : chatId;
+    // MAX: never use `from` as chat id on incoming — it is often the peer phone.
+    if (
+      !chatId &&
+      whType === 'incoming_message' &&
+      line.messengerType !== 'MAX' &&
+      typeof payload.from === 'string'
+    ) {
+      chatId = payload.from;
     }
 
     if (!chatId) return;
-
-    const line = await this.prisma.wappiLine.findUnique({ where: { id: lineId } });
-    if (!line) return;
 
     chatId = normalizeWappiChatId(chatId, line.messengerType);
 
@@ -167,19 +170,43 @@ export class WappiProcessor extends WorkerHost {
 
     if (needsContactFetch) {
       try {
+        const phoneFromPayload = resolveContactPhone({
+          excludedPhones: linePhones,
+          chatId,
+          direction,
+          payload,
+          messengerType: line.messengerType,
+        });
+        const hintPhone =
+          phoneFromPayload ??
+          (typeof payload.contact_phone === 'string'
+            ? payload.contact_phone
+            : undefined);
+
         const contactParams = buildContactGetParams(
           chatId,
           line.messengerType,
-          (payload.contact_phone || payload.phone) as string | undefined,
+          hintPhone,
           linePhones,
         );
         if (!contactParams.recipient && !contactParams.phone) {
           throw new Error('No recipient or phone for getContact');
         }
-        const contactResponse = await this.wappiService.getContact(
+        let contactResponse = await this.wappiService.getContact(
           line,
           contactParams,
         );
+        if (
+          line.messengerType === 'MAX' &&
+          !contactResponse &&
+          hintPhone &&
+          contactParams.recipient &&
+          !contactParams.phone
+        ) {
+          contactResponse = await this.wappiService.getContact(line, {
+            phone: hintPhone,
+          });
+        }
         if (contactResponse) {
           const parsed = parseWappiContactResponse(
             contactResponse,

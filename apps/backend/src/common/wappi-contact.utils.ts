@@ -165,7 +165,9 @@ export function parseWappiContactResponse(
 
   let contactPhone: string | null = null;
   if (messengerType === 'MAX') {
-    contactPhone = readContactPhoneField(data.phone, excludedPhones);
+    contactPhone =
+      readContactPhoneField(data.phone, excludedPhones) ??
+      readContactPhoneField(data.number, excludedPhones);
   } else {
     contactPhone =
       readContactPhoneField(data.number, excludedPhones) ??
@@ -244,9 +246,9 @@ export function wappiMessageChatIdCandidates(
 
   const bare = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
 
+  // MAX uses bare dialog/user ids only — @c.us is WhatsApp-specific.
   if (messengerType === 'MAX') {
     add(bare);
-    add(`${bare}@c.us`);
   }
   if (messengerType === 'WHATSAPP') {
     add(bare.includes('@') ? bare : `${bare}@c.us`);

@@ -235,7 +235,9 @@ export class WappiService {
 
   extractChatId(payload: Record<string, unknown>): string | null {
     const chatId = payload.chatId ?? payload.chat_id;
-    return typeof chatId === 'string' ? chatId : null;
+    if (typeof chatId === 'string' && chatId.trim()) return chatId.trim();
+    if (typeof chatId === 'number') return String(chatId);
+    return null;
   }
 
   extractBody(payload: Record<string, unknown>): string | null {

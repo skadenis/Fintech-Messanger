@@ -621,16 +621,20 @@ export class AdminService {
       line.messengerType,
     );
 
+    let best: Record<string, unknown>[] = [];
+
     for (const chatId of candidates) {
       try {
         const messages = await this.fetchAllChatMessagesForId(line, chatId);
-        if (messages.length > 0) return messages;
+        if (messages.length > best.length) {
+          best = messages;
+        }
       } catch (err) {
         console.error(`Failed to fetch messages for chat ${chatId}: ${err}`);
       }
     }
 
-    return [];
+    return best;
   }
 
   private async syncDialogFromWappi(
@@ -647,7 +651,13 @@ export class AdminService {
     );
 
     const linePhones = detectLinePhonesFromMessages(messages);
-    const hintPhone = readPhoneFromChatMetadata(chat, linePhones);
+    const fromMessages = resolveContactPhoneFromMessages(
+      messages,
+      linePhones,
+      line.messengerType,
+    );
+    const fromChatMeta = readPhoneFromChatMetadata(chat, linePhones);
+    const hintPhone = fromMessages ?? fromChatMeta;
 
     const contactParams = buildContactGetParams(
       normalizedChatId,
@@ -656,7 +666,20 @@ export class AdminService {
       linePhones,
     );
 
-    const contactResponse = await this.wappiService.getContact(line, contactParams);
+    let contactResponse = await this.wappiService.getContact(line, contactParams);
+
+    // MAX: retry contact/get by phone if recipient=id returned nothing.
+    if (
+      line.messengerType === 'MAX' &&
+      !contactResponse &&
+      hintPhone &&
+      contactParams.recipient &&
+      !contactParams.phone
+    ) {
+      contactResponse = await this.wappiService.getContact(line, {
+        phone: hintPhone,
+      });
+    }
 
     const parsed = parseWappiContactResponse(
       contactResponse as Record<string, unknown> | null,
@@ -671,13 +694,6 @@ export class AdminService {
         contactName = String(fallback);
       }
     }
-
-    const fromMessages = resolveContactPhoneFromMessages(
-      messages,
-      linePhones,
-      line.messengerType,
-    );
-    const fromChatMeta = readPhoneFromChatMetadata(chat, linePhones);
 
     let contactPhone =
       parsed.contactPhone ?? fromMessages ?? fromChatMeta;
