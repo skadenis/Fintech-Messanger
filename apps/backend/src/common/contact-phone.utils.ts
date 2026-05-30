@@ -36,7 +36,8 @@ export function detectLinePhonesFromMessages(
 
   for (const msg of messages) {
     if (!msg.fromMe) continue;
-    for (const field of ['from', 'to', 'contact_phone', 'phone'] as const) {
+    // Outgoing: line is in `from`; `to` is the contact — do not count `to` as line phone.
+    for (const field of ['from', 'contact_phone', 'phone'] as const) {
       const value = msg[field];
       if (typeof value !== 'string' || !looksLikePhoneNumber(value)) continue;
       const digits = normalizePhone(value);
@@ -72,11 +73,13 @@ export function resolveContactPhoneFromMessages(
   messengerType: string,
 ): string | null {
   for (const msg of messages) {
-    if (msg.fromMe) continue;
+    const direction = msg.fromMe
+      ? MessageDirection.OUTGOING
+      : MessageDirection.INCOMING;
     const resolved = resolveContactPhone({
-      linePhone: linePhones[0] ?? '',
+      excludedPhones: linePhones,
       chatId: String(msg.chatId ?? msg.chat_id ?? ''),
-      direction: MessageDirection.INCOMING,
+      direction,
       payload: msg,
       messengerType,
     });

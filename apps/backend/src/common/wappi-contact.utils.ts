@@ -155,7 +155,9 @@ export function parseWappiContactResponse(
   if (messengerType === 'MAX') {
     contactPhone = readContactPhoneField(data.phone, excludedPhones);
   } else {
-    contactPhone = readContactPhoneField(data.number, excludedPhones);
+    contactPhone =
+      readContactPhoneField(data.number, excludedPhones) ??
+      readContactPhoneField(data.phone, excludedPhones);
     if (!contactPhone && messengerType === 'WHATSAPP' && contactId) {
       const fromId = extractPhoneFromChatId(
         contactId.includes('@') ? contactId : `${contactId}@c.us`,
@@ -186,6 +188,72 @@ export function parseWappiContactResponse(
   }
 
   return { contactName, contactPhone, contactId };
+}
+
+/** Phone from chat list metadata (after line phones are known). */
+export function readPhoneFromChatMetadata(
+  chat: Record<string, unknown>,
+  excludedPhones: string[],
+): string | null {
+  for (const field of ['phone', 'number', 'contact_phone'] as const) {
+    const phone = readContactPhoneField(chat[field], excludedPhones);
+    if (phone) return phone;
+  }
+  return null;
+}
+
+export function readChatLastMessageTime(chat: Record<string, unknown>): Date | null {
+  const raw =
+    chat.last_message_time ??
+    chat.lastMessageTime ??
+    chat.time ??
+    chat.timestamp ??
+    chat.last_time;
+
+  if (raw == null) return null;
+
+  let ms: number;
+  if (typeof raw === 'number') {
+    ms = raw < 10000000000 ? raw * 1000 : raw;
+  } else if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (Number.isNaN(parsed)) return null;
+    ms = parsed;
+  } else {
+    return null;
+  }
+
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Chat id variants for Wappi message history (API format differs by messenger). */
+export function wappiMessageChatIdCandidates(
+  normalizedChatId: string,
+  rawChatId: string | undefined,
+  messengerType: string,
+): string[] {
+  const candidates = new Set<string>();
+  const add = (id: string) => {
+    const trimmed = id.trim();
+    if (trimmed) candidates.add(trimmed);
+  };
+
+  add(normalizedChatId);
+  if (rawChatId) add(String(rawChatId));
+
+  const bare = normalizedChatId.replace('@c.us', '').replace('@s.whatsapp.net', '');
+
+  if (messengerType === 'MAX') {
+    add(bare);
+    add(`${bare}@c.us`);
+  }
+  if (messengerType === 'WHATSAPP') {
+    add(bare.includes('@') ? bare : `${bare}@c.us`);
+    add(`${bare}@s.whatsapp.net`);
+  }
+
+  return [...candidates];
 }
 
 export function isGroupOrChannelChat(

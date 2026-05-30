@@ -33,6 +33,9 @@ import {
   parseWappiContactResponse,
   buildContactGetParams,
   dedupeWappiDialogs,
+  readChatLastMessageTime,
+  readPhoneFromChatMetadata,
+  wappiMessageChatIdCandidates,
 } from '../common/wappi-contact.utils';
 import { WappiLine } from '@prisma/client';
 
@@ -456,6 +459,7 @@ export class AdminService {
   }
 
   private static readonly SYNC_DIALOG_CONCURRENCY = 8;
+  private static readonly SYNC_CHATS_PAGE_SIZE = 200;
   private static readonly SYNC_MESSAGES_PAGE_SIZE = 100;
   private static readonly SYNC_MESSAGES_MAX_PAGES = 50;
 
@@ -550,20 +554,35 @@ export class AdminService {
 
   private async fetchLineDialogs(line: WappiLine): Promise<Record<string, unknown>[]> {
     try {
-      const chatsResponse = await this.wappiService.getChats(line, 200, 0, true);
-      const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
-      const filtered = dialogs.filter((chat) => {
-        const id = String(chat.id ?? '');
-        return id && !isGroupOrChannelChat(id, chat);
-      });
-      return dedupeWappiDialogs(filtered, line.messengerType);
+      const collected: Record<string, unknown>[] = [];
+      let offset = 0;
+
+      for (;;) {
+        const chatsResponse = await this.wappiService.getChats(
+          line,
+          AdminService.SYNC_CHATS_PAGE_SIZE,
+          offset,
+          true,
+        );
+        const dialogs: Record<string, unknown>[] = chatsResponse?.dialogs || [];
+        const filtered = dialogs.filter((chat) => {
+          const id = String(chat.id ?? '');
+          return id && !isGroupOrChannelChat(id, chat);
+        });
+        collected.push(...filtered);
+
+        if (dialogs.length < AdminService.SYNC_CHATS_PAGE_SIZE) break;
+        offset += AdminService.SYNC_CHATS_PAGE_SIZE;
+      }
+
+      return dedupeWappiDialogs(collected, line.messengerType);
     } catch (err) {
       console.error(`Failed to fetch chats for line ${line.id} (${line.name}):`, err);
       return [];
     }
   }
 
-  private async fetchAllChatMessages(
+  private async fetchAllChatMessagesForId(
     line: WappiLine,
     chatId: string,
   ): Promise<Record<string, unknown>[]> {
@@ -588,31 +607,47 @@ export class AdminService {
     return all;
   }
 
+  private async fetchAllChatMessages(
+    line: WappiLine,
+    normalizedChatId: string,
+    rawChatId?: string,
+  ): Promise<Record<string, unknown>[]> {
+    const candidates = wappiMessageChatIdCandidates(
+      normalizedChatId,
+      rawChatId,
+      line.messengerType,
+    );
+
+    for (const chatId of candidates) {
+      try {
+        const messages = await this.fetchAllChatMessagesForId(line, chatId);
+        if (messages.length > 0) return messages;
+      } catch (err) {
+        console.error(`Failed to fetch messages for chat ${chatId}: ${err}`);
+      }
+    }
+
+    return [];
+  }
+
   private async syncDialogFromWappi(
     line: WappiLine,
     chat: Record<string, unknown>,
   ): Promise<{ chats: number; messages: number }> {
-    const normalizedChatId = normalizeWappiChatId(
-      String(chat.id),
-      line.messengerType,
-    );
+    const rawChatId = String(chat.id);
+    const normalizedChatId = normalizeWappiChatId(rawChatId, line.messengerType);
 
-    const messages = await this.fetchAllChatMessages(line, normalizedChatId).catch(
-      (err) => {
-        console.error(`Failed to fetch messages for chat ${normalizedChatId}: ${err}`);
-        return [] as Record<string, unknown>[];
-      },
+    const messages = await this.fetchAllChatMessages(
+      line,
+      normalizedChatId,
+      rawChatId,
     );
-
-    if (messages.length === 0) {
-      return { chats: 0, messages: 0 };
-    }
 
     const linePhones = detectLinePhonesFromMessages(messages);
     const contactParams = buildContactGetParams(
       normalizedChatId,
       line.messengerType,
-      (chat.phone || chat.number || chat.contact_phone) as string | undefined,
+      undefined,
       linePhones,
     );
 
@@ -642,7 +677,8 @@ export class AdminService {
 
     let contactPhone =
       parsed.contactPhone ??
-      resolveContactPhoneFromMessages(messages, linePhones, line.messengerType);
+      resolveContactPhoneFromMessages(messages, linePhones, line.messengerType) ??
+      readPhoneFromChatMetadata(chat, linePhones);
 
     const updateData: Record<string, unknown> = {};
     if (contactName) updateData.contactName = contactName;
@@ -653,6 +689,9 @@ export class AdminService {
       );
       if (bitrixContactId) updateData.bitrixContactId = bitrixContactId;
     }
+
+    const chatLastAt = readChatLastMessageTime(chat);
+    if (chatLastAt) updateData.lastMessageAt = chatLastAt;
 
     const conversation = await this.prisma.conversation.upsert({
       where: {
@@ -671,8 +710,13 @@ export class AdminService {
           typeof updateData.bitrixContactId === 'string'
             ? updateData.bitrixContactId
             : null,
+        lastMessageAt: chatLastAt ?? new Date(),
       },
     });
+
+    if (messages.length === 0) {
+      return { chats: 1, messages: 0 };
+    }
 
     let syncedMessages = 0;
     for (const msg of messages) {
