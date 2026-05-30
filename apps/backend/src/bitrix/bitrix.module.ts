@@ -5,7 +5,7 @@ import { BitrixController } from './bitrix.controller';
 import { BitrixService } from './bitrix.service';
 
 @Module({
-  imports: [WappiModule, forwardRef(() => GatewayModule)],
+  imports: [forwardRef(() => WappiModule), forwardRef(() => GatewayModule)],
   controllers: [BitrixController],
   providers: [BitrixService],
   exports: [BitrixService],
